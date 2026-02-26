@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>3.5.5</version>
+    </parent>
+
+    <groupId>com.sz</groupId>
+    <artifactId>sz-sso-client-starter</artifactId>
+    <description>SSO Client Spring Boot Starter - 提供 SSO 客户端接入的自动配置能力</description>
+    <version>1.0.0</version>
+    <packaging>jar</packaging>
+
+    <properties>
+        <maven.compiler.source>21</maven.compiler.source>
+        <maven.compiler.target>21</maven.compiler.target>
+        <sa-token.version>1.44.0</sa-token.version>
+    </properties>
+
+    <dependencies>
+        <!-- Spring Web MVC（提供 RestController、ResponseEntity 等） -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        <!-- Sa-Token SSO -->
+        <dependency>
+            <groupId>cn.dev33</groupId>
+            <artifactId>sa-token-sso</artifactId>
+            <version>${sa-token.version}</version>
+        </dependency>
+        <!-- Sa-Token 整合 RedisTemplate -->
+        <dependency>
+            <groupId>cn.dev33</groupId>
+            <artifactId>sa-token-redis-template</artifactId>
+            <version>${sa-token.version}</version>
+        </dependency>
+        <!-- Sa-Token 整合 Forest（模式三 HTTP 推送消息） -->
+        <dependency>
+            <groupId>cn.dev33</groupId>
+            <artifactId>sa-token-forest</artifactId>
+            <version>${sa-token.version}</version>
+        </dependency>
+        <!-- commons-pool2 -->
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-pool2</artifactId>
+        </dependency>
+        <!-- Thymeleaf（前后端不分离模式下视图支持） -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-thymeleaf</artifactId>
+        </dependency>
+        <!-- Spring Boot autoconfigure -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-autoconfigure</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <version>1.18.42</version>
+            <optional>true</optional>
+        </dependency>
+        <dependency>
+            <groupId>io.swagger.core.v3</groupId>
+            <artifactId>swagger-annotations</artifactId>
+            <version>2.2.41</version>
+            <optional>true</optional>
+        </dependency>
+        <!-- 测试依赖：JUnit 5 + Mockito + AssertJ -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>com.diffplug.spotless</groupId>
+                <artifactId>spotless-maven-plugin</artifactId>
+                <version>2.44.5</version>
+                <configuration>
+                    <skip>true</skip>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>

@@ -4,6 +4,7 @@ import cn.dev33.satoken.sso.model.SaCheckTicketResult;
 import cn.dev33.satoken.stp.parameter.SaLoginParameter;
 import com.sz.sso.client.SsoLoginHandler;
 import com.sz.sso.client.SsoSessionCreator;
+import com.sz.sso.client.SsoUserMappingService;
 import com.sz.sso.client.pojo.SsoLoginResult;
 import com.sz.sso.client.service.impl.SsoClientServiceImpl;
 import org.junit.jupiter.api.BeforeEach;
@@ -40,11 +41,15 @@ class SsoClientServiceImplTest {
     @Mock
     private SsoSessionCreator<TestUser> sessionCreator;
 
+    @Mock
+    private SsoUserMappingService userMappingService;
+
     private SsoClientServiceImpl<TestUser> service;
 
     @BeforeEach
     void setUp() {
-        service = new SsoClientServiceImpl<>(loginHandler, sessionCreator);
+        // ssoClientRoleProvider=null, ssoRoleBindingService=null → 角色下发流程跳过
+        service = new SsoClientServiceImpl<>(loginHandler, sessionCreator, userMappingService, null, null);
     }
 
     // ---------------------------------------------------------------

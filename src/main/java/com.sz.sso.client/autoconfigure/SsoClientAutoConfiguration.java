@@ -2,8 +2,11 @@ package com.sz.sso.client.autoconfigure;
 
 import cn.dev33.satoken.sso.template.SaSsoClientTemplate;
 import cn.dev33.satoken.util.SaResult;
+import com.sz.sso.client.DefaultSsoRoleBindingService;
 import com.sz.sso.client.DefaultSsoSessionCreator;
+import com.sz.sso.client.SsoClientRoleProvider;
 import com.sz.sso.client.SsoLoginHandler;
+import com.sz.sso.client.SsoRoleBindingService;
 import com.sz.sso.client.SsoSessionCreator;
 import com.sz.sso.client.SsoUserMappingService;
 import com.sz.sso.client.controller.SsoClientController;
@@ -17,6 +20,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
+import org.springframework.lang.Nullable;
 
 import static com.sz.sso.client.SsoCoreConstant.MESSAGE_REGISTER;
 
@@ -33,6 +37,7 @@ import static com.sz.sso.client.SsoCoreConstant.MESSAGE_REGISTER;
  * <ul>
  *   <li>注册 {@link SaSsoClientTemplate} 的 centerId/loginId 转换策略</li>
  *   <li>注册消息处理器（REGISTER 消息 → 用户同步）</li>
+ *   <li>注册 {@link SsoRoleBindingService} 默认实现（若业务方未提供）</li>
  *   <li>注册 {@link SsoClientService} Bean</li>
  *   <li>导入 {@link SsoClientController} 提供标准 SSO 端点</li>
  * </ul>
@@ -60,6 +65,20 @@ public class SsoClientAutoConfiguration {
     public SsoSessionCreator<?> defaultSsoSessionCreator() {
         log.info("SSO Client 自动配置: 注册默认 DefaultSsoSessionCreator（基于 Sa-Token 原生 API）");
         return new DefaultSsoSessionCreator();
+    }
+
+    /**
+     * 默认 SsoRoleBindingService：仅打印 warn 日志，不做实际角色写入.
+     * <p>
+     * 若业务方已注册自己的 {@link SsoRoleBindingService} Bean，本 Bean 不会创建。
+     * 若业务方未提供 {@link SsoClientRoleProvider}，此 Bean 注册但不会被调用。
+     * </p>
+     */
+    @Bean
+    @ConditionalOnMissingBean(SsoRoleBindingService.class)
+    public SsoRoleBindingService defaultSsoRoleBindingService() {
+        log.info("SSO Client 自动配置: 注册默认 DefaultSsoRoleBindingService（仅 warn 日志）");
+        return new DefaultSsoRoleBindingService();
     }
 
     /**
@@ -94,14 +113,23 @@ public class SsoClientAutoConfiguration {
 
     /**
      * 注册 SsoClientService Bean.
+     * <p>
+     * {@link SsoClientRoleProvider} 和 {@link SsoRoleBindingService} 均为可选依赖，
+     * 未提供时角色下发流程自动跳过。
+     * </p>
      */
     @Bean
     @ConditionalOnMissingBean
     @SuppressWarnings({"unchecked", "rawtypes"})
     public SsoClientService ssoClientService(SsoLoginHandler<?> ssoLoginHandler,
-                                              SsoSessionCreator<?> ssoSessionCreator) {
-        log.info("SSO Client 自动配置: 注册 SsoClientService");
-        return new SsoClientServiceImpl(ssoLoginHandler, ssoSessionCreator);
+                                              SsoSessionCreator<?> ssoSessionCreator,
+                                              SsoUserMappingService ssoUserMappingService,
+                                              @Nullable SsoClientRoleProvider ssoClientRoleProvider,
+                                              @Nullable SsoRoleBindingService ssoRoleBindingService) {
+        log.info("SSO Client 自动配置: 注册 SsoClientService, 角色下发流程={}",
+                 ssoClientRoleProvider != null ? "启用" : "跳过（未提供 SsoClientRoleProvider）");
+        return new SsoClientServiceImpl(ssoLoginHandler, ssoSessionCreator, ssoUserMappingService,
+                                        ssoClientRoleProvider, ssoRoleBindingService);
     }
 
 }

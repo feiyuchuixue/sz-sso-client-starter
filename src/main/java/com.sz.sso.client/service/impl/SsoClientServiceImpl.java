@@ -12,7 +12,6 @@ import com.sz.sso.client.SsoRoleBindingService;
 import com.sz.sso.client.SsoSessionCreator;
 import com.sz.sso.client.SsoUserMappingService;
 import com.sz.sso.client.pojo.SsoLoginResult;
-import com.sz.sso.client.pojo.SsoUserContext;
 import com.sz.sso.client.service.SsoClientService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -22,21 +21,29 @@ import org.springframework.lang.Nullable;
  * SSO Client 登录服务实现.
  * <p>
  * 处理通过 SSO ticket 验证后的本地登录逻辑，框架无关。
- * 通过 {@link SsoLoginHandler} SPI 获取用户对象，
- * 通过 {@link SsoSessionCreator} SPI 建立本地会话。
- * </p>
- * <p>
- * 若业务方提供了 {@link SsoClientRoleProvider} Bean，则在 buildLoginUser 之后、
- * createSession 之前额外执行角色下发流程：向 SSO Server 查询用户是否为超管，
- * 并调用 {@link SsoRoleBindingService} 完成本地角色初始化。
- * </p>
- * <p>
- * 类型参数 {@code U} 由业务方框架决定，两个 SPI 实现的类型参数必须一致。
  * </p>
  *
- * @param <U> 用户对象类型
+ * <h3>登录流程</h3>
+ * <ol>
+ *   <li>（可选）首次登录默认角色初始化 — 仅当 {@link SsoClientRoleProvider} Bean 存在时触发，
+ *       调用 {@link SsoRoleBindingService#applyDefaultRole} 写入 DB</li>
+ *   <li>查询平台超管状态 — 向 Server 发送 {@code QUERY_USER_ROLES} 消息</li>
+ *   <li>同步超管状态到本地 DB — 调用 {@link SsoRoleBindingService#applySuperAdmin}</li>
+ *   <li>{@link SsoLoginHandler#buildLoginUser(Long)} — 从本地 DB 构建用户及角色信息
+ *       （含前面步骤写入的默认角色和超管状态）</li>
+ *   <li>{@link SsoSessionCreator#createSession} — 建立本地 Session</li>
+ * </ol>
+ *
+ * <h3>超管同步</h3>
+ * <p>
+ * Client 内部超管角色变更（赋予/撤销）后，应调用
+ * {@link com.sz.sso.client.SsoSyncHelper#syncSuperAdmin(Object, boolean)}
+ * 异步通知 Server 更新 {@code sso_user_client_role} 表。
+ * </p>
+ *
+ * @param <U> 用户对象类型，由业务方框架决定
  * @author sz
- * @version 2.0
+ * @version 3.0
  * @since 2025/6/23
  */
 @Slf4j
@@ -47,69 +54,63 @@ public class SsoClientServiceImpl<U> implements SsoClientService {
     private final SsoSessionCreator<U> ssoSessionCreator;
     private final SsoUserMappingService ssoUserMappingService;
 
-    /** 可选：业务方提供则启用角色下发流程，否则跳过 */
+    /** 可选：提供默认角色 key，存在时启用首次登录默认角色初始化 */
     @Nullable
     private final SsoClientRoleProvider ssoClientRoleProvider;
 
-    /** 可选：DefaultSsoRoleBindingService 或业务方自定义实现 */
+    /** 可选：默认实现或业务方自定义，执行首次登录角色写入和超管同步 */
     @Nullable
     private final SsoRoleBindingService ssoRoleBindingService;
 
-    /**
-     * SSO ticket 登录.
-     * <p>
-     * 此时 ctr.loginId 已是转换后的 Client 端本地用户 ID（由 toClientUserId 完成）。
-     * </p>
-     *
-     * @param ctr SaCheckTicketResult
-     * @return SsoLoginResult
-     */
     @Override
     @SuppressWarnings("unchecked")
     public SsoLoginResult login(SaCheckTicketResult ctr) {
-        log.info("SSO ticket 登录开始, loginId={}, centerId={}, deviceID={}", ctr.loginId, ctr.centerId, ctr.deviceId);
+        log.info("[SSO] ticket 登录开始, loginId={}, centerId={}, deviceId={}",
+                 ctr.loginId, ctr.centerId, ctr.deviceId);
 
-        cn.dev33.satoken.stp.parameter.SaLoginParameter parameter = new cn.dev33.satoken.stp.parameter.SaLoginParameter();
+        cn.dev33.satoken.stp.parameter.SaLoginParameter parameter =
+                new cn.dev33.satoken.stp.parameter.SaLoginParameter();
         parameter.setDeviceId(ctr.deviceId);
         parameter.setTimeout(ctr.remainTokenTimeout);
         parameter.setActiveTimeout(ctr.remainTokenTimeout);
 
-        Long loginId = Long.valueOf("" + ctr.loginId);
-        U user = ssoLoginHandler.buildLoginUser(loginId);
+        Long localUserId = Long.valueOf("" + ctr.loginId);
 
-        // Step 3 & 4：角色下发流程（SsoClientRoleProvider 不存在时跳过）
-        SsoUserContext ssoContext = null;
+        // Step 1：首次登录默认角色初始化（可选，仅写 DB）
         if (ssoClientRoleProvider != null && ssoRoleBindingService != null) {
-            ssoContext = queryAndBuildSsoContext(loginId, ctr);
-            if (ssoContext != null) {
-                ssoRoleBindingService.applyRoles(loginId, ssoContext, user);
-            }
+            applyDefaultRoleIfNeeded(localUserId);
         }
+
+        // Step 2：查询平台超管状态（失败降级为 false）
+        boolean isSuperAdmin = queryIsSuperAdmin(localUserId);
+
+        // Step 3：同步超管状态到本地 DB（每次登录都执行，确保与平台一致）
+        if (ssoRoleBindingService != null) {
+            applySuperAdminIfNeeded(localUserId, isSuperAdmin);
+        }
+
+        // Step 4：从本地 DB 构建用户（含角色、权限、部门等完整信息）
+        //         此时 DB 已包含 Step1 写入的默认角色 + Step3 同步的超管状态
+        U user = ssoLoginHandler.buildLoginUser(localUserId);
 
         // Step 5：建立 Session
         SsoLoginResult result = ssoSessionCreator.createSession(user, parameter, ctr.loginId);
 
-        // 将 ssoContext 存入 TokenSession（非 null 时）
-        if (ssoContext != null) {
-            StpUtil.getTokenSessionByToken(result.getAccessToken())
-                   .set(SsoCoreConstant.SESSION_KEY_SSO_CONTEXT, ssoContext);
-            log.info("SSO ticket 登录: ssoContext 已存入 TokenSession, isSuperAdmin={}, ssoRoleKey={}",
-                     ssoContext.getIsSuperAdmin(), ssoContext.getSsoRoleKey());
-        }
+        // 将超管状态存入 TokenSession（供 SsoClientUtil.isSuperAdmin() 读取）
+        StpUtil.getTokenSessionByToken(result.getAccessToken())
+               .set(SsoCoreConstant.SESSION_KEY_IS_SUPER_ADMIN, isSuperAdmin);
 
-        log.info("SSO ticket 登录成功, loginId={}", loginId);
+        log.info("[SSO] ticket 登录成功, localUserId={}, isSuperAdmin={}", localUserId, isSuperAdmin);
         return result;
     }
 
     /**
-     * 向 SSO Server 查询用户角色信息并构建 {@link SsoUserContext}.
-     *
-     * @param localUserId 本地用户 ID
-     * @param ctr         ticket 验证结果（含 centerId、clientId）
-     * @return SsoUserContext，失败时返回 null（不中断登录流程）
+     * 向 SSO Server 查询用户在本 Client 中的超管状态.
+     * <p>
+     * 失败时（Server 不可达、返回异常等）降级为 {@code false}，不中断登录流程。
+     * </p>
      */
-    @Nullable
-    private SsoUserContext queryAndBuildSsoContext(Long localUserId, SaCheckTicketResult ctr) {
+    private boolean queryIsSuperAdmin(Long localUserId) {
         try {
             Object centerId = ssoUserMappingService.toServerUserId(localUserId);
             String clientId = SaSsoClientUtil.getSsoTemplate().getClient();
@@ -119,47 +120,51 @@ public class SsoClientServiceImpl<U> implements SsoClientService {
             message.set("centerId", centerId);
             message.set("clientId", clientId);
 
-            log.info("SSO 角色下发: 向 Server 查询角色, localUserId={}, centerId={}, clientId={}",
-                     localUserId, centerId, clientId);
+            log.debug("[SSO] 查询超管状态: localUserId={}, centerId={}, clientId={}",
+                      localUserId, centerId, clientId);
 
             SaResult result = SaSsoClientUtil.pushMessageAsSaResult(message);
 
-            if (result == null) {
-                log.warn("SSO 角色下发: Server 返回为空, 跳过角色下发");
-                return null;
+            if (result == null || result.getCode() != 200 || result.getData() == null) {
+                log.warn("[SSO] 查询超管状态失败，降级为 false: localUserId={}, result={}",
+                         localUserId, result);
+                return false;
             }
 
             Object data = result.getData();
-            if (data == null || result.getCode() != 200) {
-                log.warn(
-                        "SSO 角色下发: Server 返回失败, code={}, msg={}, 跳过角色下发, data={}",
-                        result.getCode(),
-                        result.getMsg(),
-                        data
-                );
-                return null;
-            }
-
-            Boolean isSuperAdmin = (data instanceof Boolean) ? (Boolean) data : null;
-            if (isSuperAdmin == null) {
-                log.warn("SSO 角色下发: Server 响应中缺少 isSuperAdmin 字段，跳过角色下发");
-                return null;
-            }
-
-            String ssoRoleKey = isSuperAdmin
-                    ? ssoClientRoleProvider.getSuperAdminRoleKey()
-                    : ssoClientRoleProvider.getDefaultRoleKey();
-
-            return SsoUserContext.builder()
-                    .centerId(String.valueOf(centerId))
-                    .isSuperAdmin(isSuperAdmin)
-                    .ssoRoleKey(ssoRoleKey)
-                    .build();
+            boolean isSuperAdmin = Boolean.TRUE.equals(data);
+            log.debug("[SSO] 查询超管状态完成: localUserId={}, isSuperAdmin={}", localUserId, isSuperAdmin);
+            return isSuperAdmin;
 
         } catch (Exception e) {
-            log.error("SSO 角色下发: 查询异常, localUserId={}, 跳过角色下发, error={}",
-                      localUserId, e.getMessage(), e);
-            return null;
+            log.warn("[SSO] 查询超管状态异常，降级为 false: localUserId={}, error={}",
+                     localUserId, e.getMessage(), e);
+            return false;
+        }
+    }
+
+    /**
+     * 首次登录默认角色初始化（仅写 DB）.
+     */
+    private void applyDefaultRoleIfNeeded(Long localUserId) {
+        try {
+            String defaultRoleKey = ssoClientRoleProvider.getDefaultRoleKey();
+            ssoRoleBindingService.applyDefaultRole(localUserId, defaultRoleKey);
+        } catch (Exception e) {
+            log.warn("[SSO] 默认角色初始化异常，跳过: localUserId={}, error={}",
+                     localUserId, e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 同步超管状态到本地 DB.
+     */
+    private void applySuperAdminIfNeeded(Long localUserId, boolean isSuperAdmin) {
+        try {
+            ssoRoleBindingService.applySuperAdmin(localUserId, isSuperAdmin);
+        } catch (Exception e) {
+            log.warn("[SSO] 超管状态同步异常，跳过: localUserId={}, isSuperAdmin={}, error={}",
+                     localUserId, isSuperAdmin, e.getMessage(), e);
         }
     }
 

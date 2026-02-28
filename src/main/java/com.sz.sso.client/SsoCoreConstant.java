@@ -29,8 +29,21 @@ public class SsoCoreConstant {
     public static final String MESSAGE_QUERY_USER_ROLES = "QUERY_USER_ROLES";
 
     /**
-     * TokenSession key：存储平台下发的用户上下文
+     * 消息类型：Client 通知 Server 同步超管状态变更
+     * <p>
+     * Client 内部超管角色发生变更（赋予或撤销）时，通过此消息通知 Server
+     * 更新 sso_user_client_role 表，确保 Server 作为权威来源保持最新状态。
+     * </p>
      */
-    public static final String SESSION_KEY_SSO_CONTEXT = "ssoContext";
+    public static final String MESSAGE_SYNC_SUPER_ADMIN = "SYNC_SUPER_ADMIN";
+
+    /**
+     * TokenSession key：存储平台认定的超管状态（Boolean）
+     * <p>
+     * 每次 SSO 登录时由 QUERY_USER_ROLES 响应写入，表示本次 Session 内
+     * 平台是否认定当前用户为该 Client 的超管。
+     * </p>
+     */
+    public static final String SESSION_KEY_IS_SUPER_ADMIN = "isSuperAdmin";
 
 }

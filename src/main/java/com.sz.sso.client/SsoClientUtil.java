@@ -1,16 +1,15 @@
 package com.sz.sso.client;
 
 import cn.dev33.satoken.stp.StpUtil;
-import com.sz.sso.client.pojo.SsoUserContext;
 
 /**
  * SSO Client 工具类.
  * <p>
- * 提供从当前登录用户的 TokenSession 中读取平台下发上下文的便捷方法。
+ * 提供从当前登录用户的 TokenSession 中读取平台下发状态的便捷方法。
  * </p>
  *
  * @author sz
- * @version 1.0
+ * @version 2.0
  * @since 2025/6/23
  */
 public class SsoClientUtil {
@@ -20,19 +19,23 @@ public class SsoClientUtil {
     }
 
     /**
-     * 从当前登录用户的 TokenSession 读取平台下发的 {@link SsoUserContext}.
+     * 判断当前登录用户是否为本 Client 的平台超管.
      * <p>
-     * 若当前用户未登录、或登录时未触发角色下发流程，则返回 {@code null}。
+     * 该值在每次 SSO 登录时由 {@code QUERY_USER_ROLES} 消息从 Server 取回并写入 TokenSession，
+     * 表示本次 Session 内平台对该用户超管身份的认定。
+     * </p>
+     * <p>
+     * 若当前用户未登录、或 SSO 查询失败（Server 不可达时降级），则返回 {@code false}。
      * </p>
      *
-     * @return SsoUserContext，可能为 null
+     * @return {@code true} 表示平台认定为超管；{@code false} 表示非超管或无法确定
      */
-    public static SsoUserContext getSsoContext() {
-        Object val = StpUtil.getTokenSession().get(SsoCoreConstant.SESSION_KEY_SSO_CONTEXT);
-        if (val instanceof SsoUserContext ssoUserContext) {
-            return ssoUserContext;
+    public static boolean isSuperAdmin() {
+        if (!StpUtil.isLogin()) {
+            return false;
         }
-        return null;
+        Object val = StpUtil.getTokenSession().get(SsoCoreConstant.SESSION_KEY_IS_SUPER_ADMIN);
+        return Boolean.TRUE.equals(val);
     }
 
 }

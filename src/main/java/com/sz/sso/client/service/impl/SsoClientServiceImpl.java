@@ -97,8 +97,13 @@ public class SsoClientServiceImpl<U> implements SsoClientService {
         SsoLoginResult result = ssoSessionCreator.createSession(user, parameter, ctr.loginId);
 
         // 将超管状态存入 TokenSession（供 SsoClientUtil.isSuperAdmin() 读取）
-        StpUtil.getTokenSessionByToken(result.getAccessToken())
-               .set(SsoCoreConstant.SESSION_KEY_IS_SUPER_ADMIN, isSuperAdmin);
+        try {
+            StpUtil.getTokenSessionByToken(result.getAccessToken())
+                   .set(SsoCoreConstant.SESSION_KEY_IS_SUPER_ADMIN, isSuperAdmin);
+        } catch (Exception e) {
+            log.warn("[SSO] 写入 isSuperAdmin 到 TokenSession 异常，跳过: token={}, error={}",
+                     result.getAccessToken(), e.getMessage(), e);
+        }
 
         log.info("[SSO] ticket 登录成功, localUserId={}, isSuperAdmin={}", localUserId, isSuperAdmin);
         return result;

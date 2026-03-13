@@ -24,7 +24,6 @@ public class DefaultSsoSessionCreator implements SsoSessionCreator<Object> {
 
     @Override
     public SsoLoginResult createSession(Object user, SaLoginParameter parameter, Object loginId) {
-        System.out.println("parameter ==" + parameter.toString());
         StpUtil.login(loginId, parameter);
         String accessToken = StpUtil.getTokenValue();
         long expireIn = StpUtil.getTokenTimeout();

@@ -43,6 +43,6 @@ public interface SsoUserMappingService {
      *
      * @param message SSO 消息
      */
-    void syncSsoRegisterUser(SaSsoMessage message);
+    void syncSsoRegisterUser(SaSsoMessage message, String client);
 
 }

@@ -120,8 +120,9 @@ public class SsoClientAutoConfiguration {
         // REGISTER 消息：Server 有新用户注册时推送
         ssoClientTemplate.messageHolder.addHandle(MESSAGE_REGISTER, (ssoTemplate, message) -> {
             Object ssoUserId = message.get("ssoUserId");
+            String client = message.get("client").toString();
             log.info("[SSO] 收到 REGISTER 消息, ssoUserId={}", ssoUserId);
-            ssoUserMappingService.syncSsoRegisterUser(message);
+            ssoUserMappingService.syncSsoRegisterUser(message, client);
             return SaResult.ok();
         });
 

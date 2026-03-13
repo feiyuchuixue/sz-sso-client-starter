@@ -49,22 +49,19 @@ import org.springframework.scheduling.annotation.Async;
 @RequiredArgsConstructor
 public class SsoSyncHelper {
 
-    private final SsoUserMappingService ssoUserMappingService;
-
     /**
-     * 异步通知 SSO Server 同步当前 Client 某用户的超管状态.
+     * 异步通知 SSO Server 同步当前 Client 某用户的超管状态. 当 Client 本地用户的超管角色发生变更时，需要调用此方法将变更同步到 SSO Server。
      * <p>
      * 内部通过 {@link SsoUserMappingService#toServerUserId(Object)} 将本地用户 ID
      * 转换为 centerId，再通过 SSO 消息通道发送 {@code SYNC_SUPER_ADMIN} 消息到 Server。
      * </p>
      *
-     * @param localUserId  Client 本地用户 ID
+     * @param centerId     ssoUserMappingService.toServerUserId(localUserId) 的结果，即 SSO Server 的用户 ID
      * @param isSuperAdmin {@code true} 表示赋予超管；{@code false} 表示撤销超管
      */
     @Async
-    public void syncSuperAdmin(Object localUserId, boolean isSuperAdmin) {
+    public void syncSuperAdmin(Object centerId, boolean isSuperAdmin) {
         try {
-            Object centerId = ssoUserMappingService.toServerUserId(localUserId);
             String clientId = SaSsoClientUtil.getSsoTemplate().getClient();
 
             SaSsoMessage message = new SaSsoMessage();
@@ -73,16 +70,13 @@ public class SsoSyncHelper {
             message.set("clientId", clientId);
             message.set("isSuperAdmin", isSuperAdmin);
 
-            log.info("[SSO] 同步超管状态: localUserId={}, centerId={}, clientId={}, isSuperAdmin={}",
-                     localUserId, centerId, clientId, isSuperAdmin);
+            log.info("[SSO] 同步超管状态: centerId={}, clientId={}, isSuperAdmin={}", centerId, clientId, isSuperAdmin);
 
             SaSsoClientUtil.pushMessage(message);
 
             log.info("[SSO] 同步超管状态完成: centerId={}, isSuperAdmin={}", centerId, isSuperAdmin);
         } catch (Exception e) {
-            log.warn("[SSO] 同步超管状态失败, localUserId={}, isSuperAdmin={}, error={}",
-                     localUserId, isSuperAdmin, e.getMessage(), e);
-            // 异步+忽略失败：不抛出异常，不影响 Client 本地操作
+            log.warn("[SSO] 同步超管状态失败, centerId={}, isSuperAdmin={}, error={}", centerId, isSuperAdmin, e.getMessage(), e);
         }
     }
 

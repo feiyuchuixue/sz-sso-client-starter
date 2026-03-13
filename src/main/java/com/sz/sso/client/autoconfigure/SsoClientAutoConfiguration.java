@@ -10,7 +10,6 @@ import com.sz.sso.client.SsoMessageSender;
 import com.sz.sso.client.SsoRoleBindingService;
 import com.sz.sso.client.SsoServerMessageHandler;
 import com.sz.sso.client.SsoSessionCreator;
-import com.sz.sso.client.SsoSyncHelper;
 import com.sz.sso.client.SsoUserMappingService;
 import com.sz.sso.client.controller.SsoClientController;
 import com.sz.sso.client.service.SsoClientService;
@@ -43,7 +42,7 @@ import static com.sz.sso.client.SsoCoreConstant.MESSAGE_REGISTER;
  *   <li>扫描并注册业务方提供的 {@link SsoServerMessageHandler} 实现（可选，支持多个）</li>
  *   <li>注册 {@link SsoSessionCreator} 默认实现（若业务方未提供）</li>
  *   <li>注册 {@link SsoRoleBindingService} 默认实现（若业务方未提供）</li>
- *   <li>注册 {@link SsoSyncHelper} Bean（提供超管状态同步能力）</li>
+ *   <li>{@code SsoSyncHelper} Bean 由 {@link SsoSyncHelperAutoConfiguration} 更早注册，避免循环依赖</li>
  *   <li>注册 {@link SsoMessageSender} Bean（提供向 Server 发送消息的通用能力）</li>
  *   <li>注册 {@link SsoClientService} Bean</li>
  *   <li>导入 {@link SsoClientController} 提供标准 SSO 端点</li>
@@ -82,20 +81,6 @@ public class SsoClientAutoConfiguration {
     public SsoRoleBindingService defaultSsoRoleBindingService() {
         log.info("[SSO] 自动配置: 注册 DefaultSsoRoleBindingService（仅 warn 日志）");
         return new DefaultSsoRoleBindingService();
-    }
-
-    /**
-     * SsoSyncHelper Bean：提供超管状态异步同步到 Server 的能力.
-     * <p>
-     * Client 内部超管角色变更（赋予/撤销）后调用
-     * {@link SsoSyncHelper#syncSuperAdmin(Object, boolean)} 通知 Server 同步。
-     * </p>
-     */
-    @Bean
-    @ConditionalOnMissingBean(SsoSyncHelper.class)
-    public SsoSyncHelper ssoSyncHelper(SsoUserMappingService ssoUserMappingService) {
-        log.info("[SSO] 自动配置: 注册 SsoSyncHelper");
-        return new SsoSyncHelper(ssoUserMappingService);
     }
 
     /**

@@ -1,2 +1,3 @@
 com.sz.sso.client.autoconfigure.SsoSyncHelperAutoConfiguration
+com.sz.sso.client.autoconfigure.SsoClientSpiCheckConfiguration
 com.sz.sso.client.autoconfigure.SsoClientAutoConfiguration

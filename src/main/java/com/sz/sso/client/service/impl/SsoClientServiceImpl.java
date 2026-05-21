@@ -7,9 +7,8 @@ import cn.dev33.satoken.stp.StpUtil;
 import cn.dev33.satoken.util.SaResult;
 import com.sz.sso.client.SsoClientRoleProvider;
 import com.sz.sso.client.SsoCoreConstant;
-import com.sz.sso.client.SsoLoginHandler;
+import com.sz.sso.client.SsoClientLoginAdapter;
 import com.sz.sso.client.SsoRoleBindingService;
-import com.sz.sso.client.SsoSessionCreator;
 import com.sz.sso.client.SsoUserMappingService;
 import com.sz.sso.client.pojo.SsoLoginResult;
 import com.sz.sso.client.service.SsoClientService;
@@ -29,9 +28,9 @@ import org.springframework.lang.Nullable;
  *       调用 {@link SsoRoleBindingService#applyDefaultRole} 写入 DB</li>
  *   <li>查询平台超管状态 — 向 Server 发送 {@code QUERY_USER_ROLES} 消息</li>
  *   <li>同步超管状态到本地 DB — 调用 {@link SsoRoleBindingService#applySuperAdmin}</li>
- *   <li>{@link SsoLoginHandler#buildLoginUser(Long)} — 从本地 DB 构建用户及角色信息
+ *   <li>{@link SsoClientLoginAdapter#buildLoginUser(Long)} — 从本地 DB 构建用户及角色信息
  *       （含前面步骤写入的默认角色和超管状态）</li>
- *   <li>{@link SsoSessionCreator#createSession} — 建立本地 Session</li>
+ *   <li>{@link SsoClientLoginAdapter#createLoginResult} — 建立本地 Session 并返回登录结果</li>
  * </ol>
  *
  * <h3>超管同步</h3>
@@ -50,8 +49,7 @@ import org.springframework.lang.Nullable;
 @RequiredArgsConstructor
 public class SsoClientServiceImpl<U> implements SsoClientService {
 
-    private final SsoLoginHandler<U> ssoLoginHandler;
-    private final SsoSessionCreator<U> ssoSessionCreator;
+    private final SsoClientLoginAdapter<U> ssoClientLoginAdapter;
     private final SsoUserMappingService ssoUserMappingService;
 
     /** 可选：提供默认角色 key，存在时启用首次登录默认角色初始化 */
@@ -91,10 +89,10 @@ public class SsoClientServiceImpl<U> implements SsoClientService {
 
         // Step 4：从本地 DB 构建用户（含角色、权限、部门等完整信息）
         //         此时 DB 已包含 Step1 写入的默认角色 + Step3 同步的超管状态
-        U user = ssoLoginHandler.buildLoginUser(localUserId);
+        U user = ssoClientLoginAdapter.buildLoginUser(localUserId);
 
         // Step 5：建立 Session
-        SsoLoginResult result = ssoSessionCreator.createSession(user, parameter, ctr.loginId);
+        SsoLoginResult result = ssoClientLoginAdapter.createLoginResult(user, parameter, ctr.loginId);
 
         // 将超管状态存入 TokenSession（供 SsoClientUtil.isSuperAdmin() 读取）
         try {

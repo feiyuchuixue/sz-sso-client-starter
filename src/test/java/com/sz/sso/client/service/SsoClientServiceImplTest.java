@@ -2,8 +2,7 @@ package com.sz.sso.client.service;
 
 import cn.dev33.satoken.sso.model.SaCheckTicketResult;
 import cn.dev33.satoken.stp.parameter.SaLoginParameter;
-import com.sz.sso.client.SsoLoginHandler;
-import com.sz.sso.client.SsoSessionCreator;
+import com.sz.sso.client.SsoClientLoginAdapter;
 import com.sz.sso.client.SsoUserMappingService;
 import com.sz.sso.client.pojo.SsoLoginResult;
 import com.sz.sso.client.service.impl.SsoClientServiceImpl;
@@ -25,7 +24,7 @@ import static org.mockito.Mockito.when;
  * {@link SsoClientServiceImpl} 单元测试.
  * <p>
  * 验证 login() 方法的 SPI 调用链、参数透传、loginId 类型转换等核心逻辑。
- * 使用 Mockito mock 两个 SPI，不依赖 Spring 上下文或 Sa-Token 真实运行环境。
+ * 使用 Mockito mock 登录适配器与映射 SPI，不依赖 Spring 上下文或 Sa-Token 真实运行环境。
  * </p>
  */
 @DisplayName("SsoClientServiceImpl 单元测试")
@@ -36,10 +35,7 @@ class SsoClientServiceImplTest {
     record TestUser(Long userId, String name) {}
 
     @Mock
-    private SsoLoginHandler<TestUser> loginHandler;
-
-    @Mock
-    private SsoSessionCreator<TestUser> sessionCreator;
+    private SsoClientLoginAdapter<TestUser> loginAdapter;
 
     @Mock
     private SsoUserMappingService userMappingService;
@@ -49,7 +45,7 @@ class SsoClientServiceImplTest {
     @BeforeEach
     void setUp() {
         // ssoClientRoleProvider=null, ssoRoleBindingService=null → 角色下发流程跳过
-        service = new SsoClientServiceImpl<>(loginHandler, sessionCreator, userMappingService, null, null);
+        service = new SsoClientServiceImpl<>(loginAdapter, userMappingService, null, null);
     }
 
     // ---------------------------------------------------------------
@@ -70,49 +66,49 @@ class SsoClientServiceImplTest {
     // ---------------------------------------------------------------
 
     @Test
-    @DisplayName("login() 应调用 SsoLoginHandler.buildLoginUser 并传入正确 Long userId")
+    @DisplayName("login() 应调用 SsoClientLoginAdapter.buildLoginUser 并传入正确 Long userId")
     void login_shouldCallBuildLoginUser_withCorrectUserId() {
         Long userId = 123L;
         TestUser fakeUser = new TestUser(userId, "Alice");
         SsoLoginResult fakeResult = SsoLoginResult.of("token-abc", 3600L, fakeUser);
 
-        when(loginHandler.buildLoginUser(userId)).thenReturn(fakeUser);
-        when(sessionCreator.createSession(eq(fakeUser), any(SaLoginParameter.class), eq(userId)))
+        when(loginAdapter.buildLoginUser(userId)).thenReturn(fakeUser);
+        when(loginAdapter.createLoginResult(eq(fakeUser), any(SaLoginParameter.class), eq(userId)))
                 .thenReturn(fakeResult);
 
         SaCheckTicketResult ctr = buildCtr(userId, "device-001", 3600L);
         SsoLoginResult result = service.login(ctr);
 
-        verify(loginHandler).buildLoginUser(userId);
+        verify(loginAdapter).buildLoginUser(userId);
         assertThat(result).isNotNull();
         assertThat(result.getAccessToken()).isEqualTo("token-abc");
     }
 
     @Test
-    @DisplayName("login() 应调用 SsoSessionCreator.createSession 并传入正确参数")
-    void login_shouldCallCreateSession_withCorrectParameters() {
+    @DisplayName("login() 应调用 SsoClientLoginAdapter.createLoginResult 并传入正确参数")
+    void login_shouldCallCreateLoginResult_withCorrectParameters() {
         Long userId = 456L;
         TestUser fakeUser = new TestUser(userId, "Bob");
         SsoLoginResult fakeResult = SsoLoginResult.of("token-xyz", 7200L, fakeUser);
 
-        when(loginHandler.buildLoginUser(userId)).thenReturn(fakeUser);
-        when(sessionCreator.createSession(any(), any(), any())).thenReturn(fakeResult);
+        when(loginAdapter.buildLoginUser(userId)).thenReturn(fakeUser);
+        when(loginAdapter.createLoginResult(any(), any(), any())).thenReturn(fakeResult);
 
         SaCheckTicketResult ctr = buildCtr(userId, "device-002", 7200L);
         service.login(ctr);
 
-        verify(sessionCreator).createSession(eq(fakeUser), any(SaLoginParameter.class), eq(userId));
+        verify(loginAdapter).createLoginResult(eq(fakeUser), any(SaLoginParameter.class), eq(userId));
     }
 
     @Test
-    @DisplayName("login() 返回值应直接来自 SsoSessionCreator.createSession")
-    void login_shouldReturnResultFromSessionCreator() {
+    @DisplayName("login() 返回值应直接来自 SsoClientLoginAdapter.createLoginResult")
+    void login_shouldReturnResultFromLoginAdapter() {
         Long userId = 789L;
         TestUser fakeUser = new TestUser(userId, "Charlie");
         SsoLoginResult expected = SsoLoginResult.of("my-token", 1800L, fakeUser);
 
-        when(loginHandler.buildLoginUser(userId)).thenReturn(fakeUser);
-        when(sessionCreator.createSession(any(), any(), any())).thenReturn(expected);
+        when(loginAdapter.buildLoginUser(userId)).thenReturn(fakeUser);
+        when(loginAdapter.createLoginResult(any(), any(), any())).thenReturn(expected);
 
         SaCheckTicketResult ctr = buildCtr(userId, "device-003", 1800L);
         SsoLoginResult actual = service.login(ctr);
@@ -132,14 +128,14 @@ class SsoClientServiceImplTest {
         TestUser fakeUser = new TestUser(userId, "Dave");
         SsoLoginResult fakeResult = SsoLoginResult.of("t", 100L, fakeUser);
 
-        when(loginHandler.buildLoginUser(userId)).thenReturn(fakeUser);
-        when(sessionCreator.createSession(any(), any(), any())).thenReturn(fakeResult);
+        when(loginAdapter.buildLoginUser(userId)).thenReturn(fakeUser);
+        when(loginAdapter.createLoginResult(any(), any(), any())).thenReturn(fakeResult);
 
         SaCheckTicketResult ctr = buildCtr(userId, expectedDeviceId, 100L);
         service.login(ctr);
 
         ArgumentCaptor<SaLoginParameter> paramCaptor = ArgumentCaptor.forClass(SaLoginParameter.class);
-        verify(sessionCreator).createSession(any(), paramCaptor.capture(), any());
+        verify(loginAdapter).createLoginResult(any(), paramCaptor.capture(), any());
 
         SaLoginParameter captured = paramCaptor.getValue();
         assertThat(captured.getDeviceId()).isEqualTo(expectedDeviceId);
@@ -153,14 +149,14 @@ class SsoClientServiceImplTest {
         TestUser fakeUser = new TestUser(userId, "Eve");
         SsoLoginResult fakeResult = SsoLoginResult.of("t", remainTimeout, fakeUser);
 
-        when(loginHandler.buildLoginUser(userId)).thenReturn(fakeUser);
-        when(sessionCreator.createSession(any(), any(), any())).thenReturn(fakeResult);
+        when(loginAdapter.buildLoginUser(userId)).thenReturn(fakeUser);
+        when(loginAdapter.createLoginResult(any(), any(), any())).thenReturn(fakeResult);
 
         SaCheckTicketResult ctr = buildCtr(userId, "d", remainTimeout);
         service.login(ctr);
 
         ArgumentCaptor<SaLoginParameter> paramCaptor = ArgumentCaptor.forClass(SaLoginParameter.class);
-        verify(sessionCreator).createSession(any(), paramCaptor.capture(), any());
+        verify(loginAdapter).createLoginResult(any(), paramCaptor.capture(), any());
 
         SaLoginParameter captured = paramCaptor.getValue();
         assertThat(captured.getTimeout()).isEqualTo(remainTimeout);
@@ -180,30 +176,30 @@ class SsoClientServiceImplTest {
         TestUser fakeUser = new TestUser(expectedLong, "Frank");
         SsoLoginResult fakeResult = SsoLoginResult.of("t", 100L, fakeUser);
 
-        when(loginHandler.buildLoginUser(expectedLong)).thenReturn(fakeUser);
-        when(sessionCreator.createSession(any(), any(), any())).thenReturn(fakeResult);
+        when(loginAdapter.buildLoginUser(expectedLong)).thenReturn(fakeUser);
+        when(loginAdapter.createLoginResult(any(), any(), any())).thenReturn(fakeResult);
 
         SaCheckTicketResult ctr = buildCtr(loginIdStr, "d", 100L);
         service.login(ctr);
 
-        verify(loginHandler).buildLoginUser(expectedLong);
+        verify(loginAdapter).buildLoginUser(expectedLong);
     }
 
     @Test
-    @DisplayName("login() 传给 createSession 的 loginId 应为原始 ctr.loginId（未做类型转换）")
-    void login_originalLoginId_shouldBePassedToCreateSession() {
+    @DisplayName("login() 传给 createLoginResult 的 loginId 应为原始 ctr.loginId（未做类型转换）")
+    void login_originalLoginId_shouldBePassedToCreateLoginResult() {
         Long userId = 77L;
         TestUser fakeUser = new TestUser(userId, "Grace");
         SsoLoginResult fakeResult = SsoLoginResult.of("t", 100L, fakeUser);
 
-        when(loginHandler.buildLoginUser(userId)).thenReturn(fakeUser);
-        when(sessionCreator.createSession(any(), any(), eq(userId))).thenReturn(fakeResult);
+        when(loginAdapter.buildLoginUser(userId)).thenReturn(fakeUser);
+        when(loginAdapter.createLoginResult(any(), any(), eq(userId))).thenReturn(fakeResult);
 
         SaCheckTicketResult ctr = buildCtr(userId, "d", 100L);
         service.login(ctr);
 
         // 第三个参数是原始 ctr.loginId（Object），不做额外转换
-        verify(sessionCreator).createSession(any(), any(), eq(userId));
+        verify(loginAdapter).createLoginResult(any(), any(), eq(userId));
     }
 
 }

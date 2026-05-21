@@ -3,13 +3,11 @@ package com.sz.sso.client.autoconfigure;
 import cn.dev33.satoken.sso.template.SaSsoClientTemplate;
 import cn.dev33.satoken.util.SaResult;
 import com.sz.sso.client.DefaultSsoRoleBindingService;
-import com.sz.sso.client.DefaultSsoSessionCreator;
+import com.sz.sso.client.SsoClientLoginAdapter;
 import com.sz.sso.client.SsoClientRoleProvider;
-import com.sz.sso.client.SsoLoginHandler;
 import com.sz.sso.client.SsoMessageSender;
 import com.sz.sso.client.SsoRoleBindingService;
 import com.sz.sso.client.SsoServerMessageHandler;
-import com.sz.sso.client.SsoSessionCreator;
 import com.sz.sso.client.SsoUserMappingService;
 import com.sz.sso.client.controller.SsoClientController;
 import com.sz.sso.client.service.SsoClientService;
@@ -32,7 +30,7 @@ import static com.sz.sso.client.SsoCoreConstant.MESSAGE_REGISTER;
  * SSO Client 自动配置.
  * <p>
  * 当 classpath 中存在 {@link SaSsoClientTemplate} 且业务方提供了
- * {@link SsoUserMappingService} 和 {@link SsoLoginHandler} 的实现 Bean 时自动激活。
+ * {@link SsoUserMappingService} 和 {@link SsoClientLoginAdapter} 的实现 Bean 时自动激活。
  * </p>
  *
  * <h3>自动完成以下配置</h3>
@@ -40,7 +38,6 @@ import static com.sz.sso.client.SsoCoreConstant.MESSAGE_REGISTER;
  *   <li>注册 {@link SaSsoClientTemplate} 的 centerId/loginId 转换策略</li>
  *   <li>注册内置消息处理器（{@code REGISTER} 消息 → 用户同步）</li>
  *   <li>扫描并注册业务方提供的 {@link SsoServerMessageHandler} 实现（可选，支持多个）</li>
- *   <li>注册 {@link SsoSessionCreator} 默认实现（若业务方未提供）</li>
  *   <li>注册 {@link SsoRoleBindingService} 默认实现（若业务方未提供）</li>
  *   <li>{@code SsoSyncHelper} Bean 由 {@link SsoSyncHelperAutoConfiguration} 更早注册，避免循环依赖</li>
  *   <li>注册 {@link SsoMessageSender} Bean（提供向 Server 发送消息的通用能力）</li>
@@ -55,19 +52,9 @@ import static com.sz.sso.client.SsoCoreConstant.MESSAGE_REGISTER;
 @Slf4j
 @AutoConfiguration
 @ConditionalOnClass(SaSsoClientTemplate.class)
-@ConditionalOnBean({SsoUserMappingService.class, SsoLoginHandler.class})
+@ConditionalOnBean({SsoUserMappingService.class, SsoClientLoginAdapter.class})
 @Import(SsoClientController.class)
 public class SsoClientAutoConfiguration {
-
-    /**
-     * 默认 SsoSessionCreator：基于 Sa-Token 原生 API 建立会话.
-     */
-    @Bean
-    @ConditionalOnMissingBean(SsoSessionCreator.class)
-    public SsoSessionCreator<?> defaultSsoSessionCreator() {
-        log.info("[SSO] 自动配置: 注册 DefaultSsoSessionCreator");
-        return new DefaultSsoSessionCreator();
-    }
 
     /**
      * 默认 SsoRoleBindingService：首次登录默认角色初始化时打印 warn 日志.
@@ -163,14 +150,13 @@ public class SsoClientAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean
     @SuppressWarnings({"unchecked", "rawtypes"})
-    public SsoClientService ssoClientService(SsoLoginHandler<?> ssoLoginHandler,
-                                             SsoSessionCreator<?> ssoSessionCreator,
+    public SsoClientService ssoClientService(SsoClientLoginAdapter<?> ssoClientLoginAdapter,
                                              SsoUserMappingService ssoUserMappingService,
                                              @Nullable SsoClientRoleProvider ssoClientRoleProvider,
                                              @Nullable SsoRoleBindingService ssoRoleBindingService) {
         log.info("[SSO] 自动配置: 注册 SsoClientService, 首次登录默认角色={}",
                 ssoClientRoleProvider != null ? "启用（defaultRoleKey=" + ssoClientRoleProvider.getDefaultRoleKey() + "）" : "跳过");
-        return new SsoClientServiceImpl(ssoLoginHandler, ssoSessionCreator, ssoUserMappingService,
+        return new SsoClientServiceImpl(ssoClientLoginAdapter, ssoUserMappingService,
                 ssoClientRoleProvider, ssoRoleBindingService);
     }
 

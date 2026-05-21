@@ -157,7 +157,7 @@ sa-token:
 
 ### 第三步：实现 SPI 接口
 
-Starter 通过 SPI 接口与业务系统对接。**2 个必须实现，3 个可选。**
+Starter 通过 SPI 接口与业务系统对接。**2 个必须实现，2 个可选。**
 
 #### 必须实现
 
@@ -190,42 +190,29 @@ public class SsoUserMappingServiceImpl implements SsoUserMappingService {
 }
 ```
 
-##### `SsoLoginHandler<U>` — 构建用户对象
+##### `SsoClientLoginAdapter<U>` — 构建用户并创建登录态
 
-从本地 DB 构建完整的用户对象（含角色、权限等），供后续 Session 创建使用。
+统一负责两件事：
+
+1. 从本地 DB 构建完整的用户对象（含角色、权限等）
+2. 使用该用户对象建立本地 Session，并返回 `SsoLoginResult`
 
 ```java
 @Component
+@Slf4j
 @RequiredArgsConstructor
-public class SsoLoginHandlerImpl implements SsoLoginHandler<LoginUser> {
+public class SsoClientLoginAdapterImpl implements SsoClientLoginAdapter<LoginUser> {
 
     private final SysUserService userService;
 
     @Override
     public LoginUser buildLoginUser(Long userId) {
+        log.info("构建 LoginUser, userId={}", userId);
         return userService.buildLoginUser(userId);
     }
-}
-```
-
-> 泛型 `U` 是你的业务用户类型，需与 `SsoSessionCreator<U>` 保持一致。
-
----
-
-#### 可选实现
-
-##### `SsoSessionCreator<U>` — 建立本地会话
-
-控制 Session 的建立方式。不实现时，内置 `DefaultSsoSessionCreator` 自动生效（仅执行 `StpUtil.login`，TokenSession 不写入用户对象）。
-
-如需将用户对象存入 TokenSession：
-
-```java
-@Component
-public class SsoSessionCreatorImpl implements SsoSessionCreator<LoginUser> {
 
     @Override
-    public SsoLoginResult createSession(LoginUser loginUser, SaLoginParameter parameter, Object loginId) {
+    public SsoLoginResult createLoginResult(LoginUser loginUser, SaLoginParameter parameter, Object loginId) {
         LoginUtils.performLogin(loginUser, parameter, null);
         String accessToken = StpUtil.getTokenValue();
         long expireIn = StpUtil.getTokenTimeout();
@@ -233,6 +220,12 @@ public class SsoSessionCreatorImpl implements SsoSessionCreator<LoginUser> {
     }
 }
 ```
+
+> 泛型 `U` 是你的业务用户类型。
+
+---
+
+#### 可选实现
 
 ##### `SsoClientRoleProvider` — 提供默认角色 key
 
@@ -398,8 +391,8 @@ ticket 校验通过，获得 localUserId
 └──────────────────────────────────────────────────────────────┘
             │
             ▼
-┌─── Step 5: createSession(user, parameter, loginId) ──────────┐
-│   SsoSessionCreator 建立 Session                              │
+┌─── Step 5: createLoginResult(user, parameter, loginId) ──────┐
+│   SsoClientLoginAdapter 建立 Session                          │
 │   Starter 额外写入 isSuperAdmin Boolean 到 TokenSession       │
 │   返回 accessToken + expireIn + userInfo                      │
 └──────────────────────────────────────────────────────────────┘
@@ -428,13 +421,10 @@ ticket 校验通过，获得 localUserId
 
 | 接口                    | 泛型               | 必须   | 内置默认实现                                   | 不实现的后果                                        |
 | ----------------------- | ------------------ | ------ | ---------------------------------------------- | --------------------------------------------------- |
-| `SsoUserMappingService` | 无                 | **是** | 无                                             | 自动装配不激活                                      |
-| `SsoLoginHandler<U>`    | `U` = 用户对象类型 | **是** | 无                                             | 自动装配不激活                                      |
-| `SsoSessionCreator<U>`  | `U` = 用户对象类型 | 否     | `DefaultSsoSessionCreator`                     | 只执行 `StpUtil.login`，TokenSession 不写入用户对象 |
-| `SsoClientRoleProvider` | 无                 | 否     | 无                                             | 首次登录默认角色初始化跳过                          |
-| `SsoRoleBindingService` | 无                 | 否     | `DefaultSsoRoleBindingService`（仅 warn 日志） | 默认角色不写入 DB，超管状态不同步到 DB              |
-
-> `SsoLoginHandler<U>` 与 `SsoSessionCreator<U>` 的泛型 `U` 必须是同一类型。
+| `SsoUserMappingService`   | 无                 | **是** | 无                                             | 自动装配不激活                         |
+| `SsoClientLoginAdapter<U>`| `U` = 用户对象类型 | **是** | 无                                             | 自动装配不激活                         |
+| `SsoClientRoleProvider`   | 无                 | 否     | 无                                             | 首次登录默认角色初始化跳过             |
+| `SsoRoleBindingService`   | 无                 | 否     | `DefaultSsoRoleBindingService`（仅 warn 日志） | 默认角色不写入 DB，超管状态不同步到 DB |
 
 ---
 
@@ -533,9 +523,9 @@ SsoCoreConstant.SESSION_KEY_IS_SUPER_ADMIN // "isSuperAdmin"       — TokenSess
 
 | 条件                                              | 说明                            |
 | ------------------------------------------------- | ------------------------------- |
-| `@ConditionalOnClass(SaSsoClientTemplate.class)`  | classpath 中存在 `sa-token-sso` |
-| `@ConditionalOnBean(SsoUserMappingService.class)` | 业务方已提供实现                |
-| `@ConditionalOnBean(SsoLoginHandler.class)`       | 业务方已提供实现                |
+| `@ConditionalOnClass(SaSsoClientTemplate.class)`    | classpath 中存在 `sa-token-sso` |
+| `@ConditionalOnBean(SsoUserMappingService.class)`   | 业务方已提供实现                |
+| `@ConditionalOnBean(SsoClientLoginAdapter.class)`   | 业务方已提供实现                |
 
 ---
 
@@ -570,18 +560,25 @@ public class MinimalMappingService implements SsoUserMappingService {
     }
 }
 
-// 2. 构建用户对象（直接返回 userId）
+// 2. 构建用户对象并创建登录态（直接返回 userId）
 @Component
-public class MinimalLoginHandler implements SsoLoginHandler<Long> {
+public class MinimalLoginAdapter implements SsoClientLoginAdapter<Long> {
 
     @Override
     public Long buildLoginUser(Long userId) {
         return userId;
     }
+
+    @Override
+    public SsoLoginResult createLoginResult(Long user, SaLoginParameter parameter, Object loginId) {
+        StpUtil.login(loginId, parameter);
+        String accessToken = StpUtil.getTokenValue();
+        long expireIn = StpUtil.getTokenTimeout();
+        return SsoLoginResult.of(accessToken, expireIn, user);
+    }
 }
 
 // 只实现以上 2 个必须接口即可启动
-// · SsoSessionCreator → DefaultSsoSessionCreator 自动生效
 // · SsoClientRoleProvider → 不实现，首次登录默认角色跳过
 // · SsoRoleBindingService → DefaultSsoRoleBindingService 自动生效（仅 warn 日志）
 // · 超管状态仍会从 Server 查询并存入 TokenSession

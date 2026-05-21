@@ -26,7 +26,7 @@ package com.sz.sso.client;
  *   isSuperAdmin = queryIsSuperAdmin(userId)   ← 从 Server 获取超管状态
  *   applySuperAdmin(userId, isSuperAdmin)      ← 同步超管状态到本地 DB
  *   buildLoginUser(userId)                     ← 从 DB 构建完整用户信息
- *   createSession(user, ...)                   ← 存入 Redis
+ *   createLoginResult(user, ...)               ← 建立本地登录态
  * </pre>
  *
  * @author sz

@@ -1,5 +1,6 @@
-package com.sz.sso.client.pojo;
+package com.sz.ssoadmin.client.pojo;
 
+import com.sz.sso.client.pojo.SsoLoginResult;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 

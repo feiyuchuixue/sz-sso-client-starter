@@ -1,12 +1,13 @@
 package com.sz.sso.client.pojo;
 
+import com.sz.sso.client.SsoClientLoginAdapter;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 
 /**
  * SSO 登录结果 DTO.
  * <p>
- * 框架无关的登录响应对象，由 {@link com.sz.sso.client.SsoClientLoginAdapter} 实现方填充并返回。
+ * 框架无关的登录响应对象，由 {@link SsoClientLoginAdapter} 实现方填充并返回。
  * 替代原 sz 框架专属的 {@code LoginVO}，使 starter 不依赖任何业务框架的具体类型。
  * </p>
  *

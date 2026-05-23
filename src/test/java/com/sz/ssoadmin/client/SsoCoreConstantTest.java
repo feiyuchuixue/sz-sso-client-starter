@@ -1,5 +1,6 @@
-package com.sz.sso.client;
+package com.sz.ssoadmin.client;
 
+import com.sz.sso.client.SsoCoreConstant;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 

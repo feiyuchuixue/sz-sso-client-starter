@@ -1,5 +1,7 @@
-package com.sz.sso.client;
+package com.sz.ssoadmin.client;
 
+import com.sz.sso.client.SsoUserMeta;
+import com.sz.sso.client.SsoUserMetaUtils;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 

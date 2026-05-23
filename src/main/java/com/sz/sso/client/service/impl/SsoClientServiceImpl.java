@@ -6,6 +6,7 @@ import cn.dev33.satoken.sso.template.SaSsoClientUtil;
 import cn.dev33.satoken.stp.StpUtil;
 import cn.dev33.satoken.util.SaResult;
 import com.sz.sso.client.SsoClientRoleProvider;
+import com.sz.sso.client.SsoSyncHelper;
 import com.sz.sso.client.SsoCoreConstant;
 import com.sz.sso.client.SsoClientLoginAdapter;
 import com.sz.sso.client.SsoRoleBindingService;
@@ -36,7 +37,7 @@ import org.springframework.lang.Nullable;
  * <h3>超管同步</h3>
  * <p>
  * Client 内部超管角色变更（赋予/撤销）后，应调用
- * {@link com.sz.sso.client.SsoSyncHelper#syncSuperAdmin(Object, boolean)}
+ * {@link SsoSyncHelper#syncSuperAdmin(Object, boolean)}
  * 异步通知 Server 更新 {@code sso_user_client_role} 表。
  * </p>
  *

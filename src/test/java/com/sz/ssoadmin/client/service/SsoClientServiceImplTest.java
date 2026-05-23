@@ -1,4 +1,4 @@
-package com.sz.sso.client.service;
+package com.sz.ssoadmin.client.service;
 
 import cn.dev33.satoken.sso.model.SaCheckTicketResult;
 import cn.dev33.satoken.stp.parameter.SaLoginParameter;

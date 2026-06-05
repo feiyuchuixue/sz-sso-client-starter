@@ -38,6 +38,16 @@ public class SsoCoreConstant {
     public static final String MESSAGE_SYNC_SUPER_ADMIN = "SYNC_SUPER_ADMIN";
 
     /**
+     * 消息类型：Server 通知 Client 同步超管状态变更
+     * <p>
+     * SSO Server 管理端授予或撤销某用户在指定 Client 的超管身份时，通过此消息通知目标 Client
+     * 更新本地用户标签和角色。Client 侧由 starter 内置处理器接收，并委托
+     * {@link SsoRoleBindingService#applySuperAdmin(Object, boolean)} 执行业务落库。
+     * </p>
+     */
+    public static final String MESSAGE_SYNC_CLIENT_SUPER_ADMIN = "SYNC_CLIENT_SUPER_ADMIN";
+
+    /**
      * TokenSession key：存储平台认定的超管状态（Boolean）
      * <p>
      * 每次 SSO 登录时由 QUERY_USER_ROLES 响应写入，表示本次 Session 内

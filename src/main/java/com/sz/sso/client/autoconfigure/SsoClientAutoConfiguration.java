@@ -2,6 +2,7 @@ package com.sz.sso.client.autoconfigure;
 
 import cn.dev33.satoken.sso.template.SaSsoClientTemplate;
 import cn.dev33.satoken.util.SaResult;
+import com.sz.sso.client.SsoClientSuperAdminSyncHandler;
 import com.sz.sso.client.DefaultSsoRoleBindingService;
 import com.sz.sso.client.SsoClientLoginAdapter;
 import com.sz.sso.client.SsoClientRoleProvider;
@@ -14,6 +15,8 @@ import com.sz.sso.client.service.SsoClientService;
 import com.sz.sso.client.service.impl.SsoClientServiceImpl;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.SmartInitializingSingleton;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
@@ -22,7 +25,8 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.lang.Nullable;
 
-import java.util.List;
+import java.util.LinkedHashSet;
+import java.util.Set;
 
 import static com.sz.sso.client.SsoCoreConstant.MESSAGE_REGISTER;
 
@@ -37,6 +41,7 @@ import static com.sz.sso.client.SsoCoreConstant.MESSAGE_REGISTER;
  * <ul>
  *   <li>注册 {@link SaSsoClientTemplate} 的 centerId/loginId 转换策略</li>
  *   <li>注册内置消息处理器（{@code REGISTER} 消息 → 用户同步）</li>
+ *   <li>注册内置消息处理器（Server → Client 超管状态同步）</li>
  *   <li>扫描并注册业务方提供的 {@link SsoServerMessageHandler} 实现（可选，支持多个）</li>
  *   <li>注册 {@link SsoRoleBindingService} 默认实现（若业务方未提供）</li>
  *   <li>{@code SsoSyncHelper} Bean 由 {@link SsoSyncHelperAutoConfiguration} 更早注册，避免循环依赖</li>
@@ -110,23 +115,36 @@ public class SsoClientAutoConfiguration {
      * </p>
      *
      * @param ssoClientTemplate sa-token SSO Client 模板
-     * @param customHandlers    业务方注册的自定义消息处理器列表（可为空）
+     * @param messageHandlers   业务方及 Starter 注册的消息处理器列表（可为空）
      */
-    @Autowired(required = false)
-    public void configCustomMessageHandlers(SaSsoClientTemplate ssoClientTemplate,
-                                            @Nullable List<SsoServerMessageHandler> customHandlers) {
-        if (customHandlers == null || customHandlers.isEmpty()) {
-            log.debug("[SSO] 未检测到自定义 SsoServerMessageHandler，跳过注册");
-            return;
-        }
-        for (SsoServerMessageHandler handler : customHandlers) {
-            ssoClientTemplate.messageHolder.addHandle(
-                    handler.messageType(),
-                    handler::handle
-            );
-            log.info("[SSO] 注册自定义消息处理器: type={}, handler={}",
-                    handler.messageType(), handler.getClass().getSimpleName());
-        }
+    @Bean
+    public SmartInitializingSingleton ssoServerMessageHandlerRegistrar(SaSsoClientTemplate ssoClientTemplate,
+                                                                       ObjectProvider<SsoServerMessageHandler> messageHandlers) {
+        return () -> {
+            Set<String> registeredTypes = new LinkedHashSet<>();
+            messageHandlers.orderedStream().forEach(handler -> {
+                String messageType = handler.messageType();
+                if (!registeredTypes.add(messageType)) {
+                    throw new IllegalStateException("Duplicate SSO message handler type: " + messageType);
+                }
+                ssoClientTemplate.messageHolder.addHandle(messageType, handler::handle);
+                log.info("[SSO] 注册消息处理器: type={}, handler={}", messageType, handler.getClass().getSimpleName());
+            });
+            if (registeredTypes.isEmpty()) {
+                log.debug("[SSO] 未检测到 SsoServerMessageHandler，跳过注册");
+            }
+        };
+    }
+
+    /**
+     * 注册 Server → Client 超管状态同步处理器.
+     */
+    @Bean
+    @ConditionalOnMissingBean(SsoClientSuperAdminSyncHandler.class)
+    public SsoClientSuperAdminSyncHandler ssoClientSuperAdminSyncHandler(SsoUserMappingService ssoUserMappingService,
+                                                                         SsoRoleBindingService ssoRoleBindingService) {
+        log.info("[SSO] 自动配置: 注册 Server → Client 超管同步处理器");
+        return new SsoClientSuperAdminSyncHandler(ssoUserMappingService, ssoRoleBindingService);
     }
 
     /**

@@ -1,2 +1,2 @@
 org.springframework.boot.diagnostics.FailureAnalyzer=\
-  com.sz.sso.client.autoconfigure.SsoClientSpiFailureAnalyzer
+  com.sz.ssoclient.autoconfigure.SsoClientSpiFailureAnalyzer

@@ -1,3 +1,6 @@
-com.sz.sso.client.autoconfigure.SsoSyncHelperAutoConfiguration
-com.sz.sso.client.autoconfigure.SsoClientSpiCheckConfiguration
-com.sz.sso.client.autoconfigure.SsoClientAutoConfiguration
+com.sz.ssoclient.autoconfigure.SsoClientSyncAutoConfiguration
+com.sz.ssoclient.autoconfigure.SsoClientSpiCheckConfiguration
+com.sz.ssoclient.autoconfigure.SsoClientTemplateAutoConfiguration
+com.sz.ssoclient.autoconfigure.SsoClientMessageAutoConfiguration
+com.sz.ssoclient.autoconfigure.SsoClientLoginAutoConfiguration
+com.sz.ssoclient.autoconfigure.SsoClientAutoConfiguration

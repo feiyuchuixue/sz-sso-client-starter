@@ -1,108 +1,94 @@
-# sz-sso-client-starter
+# sz-sso Client SDK 统一接入指南
 
-## 背景
+本文是一篇面向接入方的完整指南，覆盖 **Java 后端 Client Starter** 与 **Web/Vue 前端 Client SDK** 的接入顺序、最小配置、扩展点和联调验收。你可以把它当作一份从 0 开始接入 sz-sso 的操作手册。
 
-`sz-sso-client-starter` 是 `sz-sso` 开源版配套的 Client 端 Spring Boot Starter，基于 [Sa-Token SSO 模式三](https://sa-token.cc/doc.html#/sso/sso-type3) 封装。
+当前文档基于以下实际代码编写：
 
-业务系统接入它之后，不需要自己处理 ticket 校验、SSO Client 标准端点、单点注销回调、Server 消息推送、注册同步、平台超管状态同步等重复工作。你只需要实现几个和本地用户体系相关的 SPI，Starter 就会把 SSO 登录结果转换成本系统自己的登录态。
+| 类型 | 工程 | 说明 |
+| --- | --- | --- |
+| Java Client SDK | `sz-sso-client-starter` | Spring Boot 后端接入 SDK |
+| Web Client SDK | `sz-sso-client-web-sdk` | Vue 前端轻量接入 SDK |
+| Java 接入示例 | `sz-sso-client-demo` | 后端 Client 示例 |
+| Web 接入示例 | `sz-sso-client-web-demo` | 前端 Client 示例 |
 
-当前开源版聚焦账号密码统一登录、Ticket 协议、注册同步、Client 接入、Client 超管同步与基础管理能力。第三方登录、OAuth Provider、OIDC、SAML、LDAP、MFA 等能力不属于当前开源版 Starter 范围。
+> 本文只说明当前已经落地的 Client 接入能力。OAuth、OIDC、SAML、LDAP、AD、MFA、第三方 Provider 等企业级协议或账号治理能力不属于当前开源版 Client SDK 已完成能力。
 
----
+## 一、先理解整体流程
 
-## 一分钟理解
+sz-sso 的 Client 接入分为两部分：
 
-一个业务系统接入 SSO 后，最容易卡在三件事上：
+1. **后端 Client**：接收前端带回来的 `ticket`，调用 SSO Server 换取登录信息，并在本系统写入登录态。
+2. **前端 Client**：负责跳转认证中心、处理 `/sso-login` 回调、拿 `ticket` 调后端换取本系统 token。
 
-1. **SSO Server 的用户 ID 怎么变成本系统的用户 ID？**
-2. **ticket 校验成功后，怎么创建本系统自己的登录态？**
-3. **平台指定的 Client 超管，怎么同步成本系统里的角色或权限？**
-
-Starter 做的是协议层和流程层的事：
-
-```text
-SSO Server
-    |
-    | ticket / message
-    v
-sz-sso-client-starter
-    |
-    | SPI
-    v
-业务系统自己的用户、角色、权限、登录态
-```
-
-它不会越过业务系统直接写你的用户库、角色库、权限库。所有本地业务决策都通过 SPI 交给业务系统自己实现。
-
----
-
-## 它解决什么问题
-
-### 1. 第一次登录没有角色怎么办？
-
-新用户第一次通过 SSO 登录某个 Client 时，本地可能还没有角色记录。Starter 可以在登录流程中调用 `SsoRoleBindingService.applyDefaultRole()`，让业务系统给新用户写入默认角色。
-
-这个步骤是可选的。不需要默认角色能力时，不实现 `SsoClientRoleProvider` 即可。
-
-### 2. 第一个超管从哪里来？
-
-平台管理员可以在 SSO Server 端指定某个用户是某个 Client 的超管。用户登录 Client 时，Starter 会向 Server 查询：
+一次完整登录流程如下：
 
 ```text
-QUERY_USER_ROLES -> isSuperAdmin: true / false
+用户访问业务系统
+  -> 前端发现未登录，跳转 /sso-login?back=原始地址
+  -> Web SDK 判断当前没有 ticket，拼出认证中心登录地址
+  -> 用户在认证中心登录
+  -> 认证中心回跳业务前端 /sso-login?ticket=xxx&back=xxx
+  -> Web SDK 调 Client 后端 /sso/doLoginByTicket
+  -> Java Starter 调 SSO Server 校验 ticket
+  -> Java Starter 映射本地用户、写入本地登录态
+  -> 后端返回本系统 accessToken
+  -> 前端保存 token，并回到 back 地址
 ```
 
-然后通过 `SsoRoleBindingService.applySuperAdmin()` 把这个状态同步到本地。业务系统可以把它落到 `user_tag`、角色表、权限表，或者自己的管理员标记中。
+你接入时只需要记住一句话：
 
-### 3. Client 本地改了超管，Server 怎么知道？
+> **前端负责跳转和拿票，后端负责验票和落本地登录态。**
 
-如果业务系统内部修改了用户的超管身份，可以调用 `SsoSyncHelper.syncSuperAdmin()` 异步通知 Server，同步更新平台侧的 Client 超管名单。
+## 二、接入优先级
 
-```text
-Client 本地变更 -> SsoSyncHelper -> SYNC_SUPER_ADMIN -> SSO Server
+建议按下面顺序接入。不要一上来就做角色同步、用户菜单、扩展消息，否则排查成本会很高。
+
+| 优先级 | 目标 | 必做内容 | 完成信号 |
+| --- | --- | --- | --- |
+| P0 | 跑通统一登录 | 后端 Starter、前端 SDK、`/sso-login`、`ticket` 换 token | 用户能从业务系统跳到认证中心，登录后回到业务系统并登录成功 |
+| P1 | 补齐业务权限 | 默认角色、Client 超管、退出清理、用户菜单 | 登录后角色正确，超管识别正确，退出后本地状态清空 |
+| P2 | 扩展治理能力 | 自定义消息、更多用户同步、诊断能力 | 能按业务需要扩展 SSO Server 与 Client 之间的消息 |
+
+如果你是第一次接入，只需要先完成 **P0**。
+
+## 三、接入前准备
+
+开始前先确认这些信息。信息不完整时，后面的配置会不知道该填什么。
+
+| 配置项 | 示例 | 说明 |
+| --- | --- | --- |
+| Client 标识 | `sso-client3` | 当前业务系统在 SSO Server 中登记的 Client 标识 |
+| SSO Server API 地址 | `http://127.0.0.1:5001/api/sso` | Java Starter 调用 SSO Server 的后端接口地址 |
+| 认证中心前端地址 | `http://127.0.0.1:3310` | 浏览器跳转登录页的地址 |
+| Client 后端 API 前缀 | `/api` | Web SDK 调用业务后端时使用的基础路径 |
+| Client 后端推送接收地址 | `http://127.0.0.1:5001/api/sso/pushS` | 当前 Client 后端暴露给 SSO Server 的消息推送地址 |
+| 登录回调路径 | `/sso-login` | 前端 SDK 默认回调路由 |
+
+示例 demo 中使用的关键值：
+
+```yaml
+client: sso-client3
+server-url: http://127.0.0.1:5001/api/sso
+auth-url: http://127.0.0.1:3310/login
+push-url: http://127.0.0.1:5001/api/sso/pushS
 ```
 
----
+前端 demo 中使用：
 
-## 架构总览
-
-```text
-┌──────────────────────────────────────────────────────────┐
-│                      SSO Server                          │
-│                                                          │
-│  - 统一登录 / 注销 / Ticket                              │
-│  - 维护 SSO 用户与 Client 管理关系                       │
-│  - 处理 QUERY_USER_ROLES、SYNC_SUPER_ADMIN 等消息         │
-└──────────────┬────────────────────────┬──────────────────┘
-               │                        ▲
-     登录时查询超管状态            Client 主动回传变更
-               │                        │
-               ▼                        │
-┌──────────────▼────────────────────────┴──────────────────┐
-│                sz-sso-client-starter                     │
-│                                                          │
-│  - 自动注册 /sso/** Client 端点                           │
-│  - 编排 ticket 登录流程                                   │
-│  - 发送和接收 Sa-Token SSO message                       │
-│  - 将超管状态写入 TokenSession                           │
-│  - 通过 SPI 对接业务系统                                  │
-└──────────────────────────┬───────────────────────────────┘
-                           │
-                           ▼
-┌──────────────────────────────────────────────────────────┐
-│                   业务 Client 系统                        │
-│                                                          │
-│  - 实现用户映射、登录适配、角色绑定等 SPI                  │
-│  - 维护本地用户、角色、菜单、数据权限                      │
-│  - 创建本系统自己的登录态                                  │
-└──────────────────────────────────────────────────────────┘
+```env
+VITE_API_CONTEXT_PATH=/api
+VITE_API_PROXY_TARGET=http://127.0.0.1:9991
+VITE_SSO_CLIENT_FLAG=sso-client3
+VITE_UCENTER_URL=http://127.0.0.1:3310
 ```
 
----
+## 四、P0：后端接入 Java Client Starter
 
-## 快速开始
+后端接入的目标是：让业务系统拥有 `/sso/doLoginByTicket` 等端点，并能把 SSO 用户转换成本系统登录用户。
 
-### 第一步：引入依赖
+### 4.1 添加 Maven 依赖
+
+在业务后端工程中引入：
 
 ```xml
 <dependency>
@@ -112,361 +98,746 @@ Client 本地变更 -> SsoSyncHelper -> SYNC_SUPER_ADMIN -> SSO Server
 </dependency>
 ```
 
-Starter 已依赖 `sz-sso-core`、`sa-token-sso`、`sa-token-redis-template`、`sa-token-forest`、`spring-boot-starter-web` 和 Spring Boot 自动配置能力。
+如果你的工程没有直接引入 core，也可以按 demo 的方式同时引入：
 
-### 第二步：配置 `application.yml`
+```xml
+<dependency>
+    <groupId>com.sz</groupId>
+    <artifactId>sz-sso-core</artifactId>
+    <version>1.0.0</version>
+</dependency>
+```
+
+### 4.2 配置 Sa-Token SSO Client
+
+在业务系统的配置文件中增加 `sa-token.sso-client`：
 
 ```yaml
 sa-token:
-  token-name: Authorization
-  timeout: 604800
-  active-timeout: 86400
-  is-concurrent: true
-  is-share: false
-  token-style: uuid
-  is-read-header: true
-  is-read-cookie: false
-  token-prefix: Bearer
-
   sso-client:
-    mode: sso-client3
-    client: your-client-flag
-    server-url: http://sso-server-host/api/admin
-    auth-url: http://sso-server-host/login
-    is-http: true
-    is-slo: true
-    reg-logout-url: true
-    secret-key: your-secret-key
-    push-url: http://your-client-host/sso/pushC
+    # Client 标识，必须与 SSO Server 中登记的 client 一致
+    client: sso-client3
+
+    # SSO Server 后端接口地址。Starter 会用它校验 ticket、获取用户信息
+    server-url: http://127.0.0.1:5001/api/sso
+
+    # 认证中心前端登录页地址。后端 /sso/getSsoAuthUrl 会基于它生成跳转地址
+    auth-url: http://127.0.0.1:3310/login
+
+    # 是否向 SSO Server 注册单点登出回调
+    reg-logout-call: true
+
+    # 当前 Client 后端暴露给 SSO Server 的推送地址
+    # 注意：这里是 Server 调 Client 的地址，demo 中是 /api/sso/pushS
+    push-url: http://127.0.0.1:5001/api/sso/pushS
 ```
 
-几个最容易配错的项：
+常见误区：
 
-| 配置项 | 说明 |
+| 容易填错的地方 | 正确写法 |
 | --- | --- |
-| `client` | 当前 Client 标识，必须先在 SSO Server 端登记 |
-| `server-url` | SSO Server 后端 API 地址 |
-| `auth-url` | 认证中心前端登录页地址 |
-| `secret-key` | Client 与 Server 共享的签名密钥，生产环境必须更换 |
-| `push-url` | 当前 Client 暴露给 Server 的消息推送地址，一般是 `http://host/sso/pushC` |
+| `server-url` 写成认证中心前端地址 | 应写 SSO Server 后端 API 地址 |
+| `auth-url` 写成后端 API 地址 | 应写认证中心前端登录页地址 |
+| 把消息接收入口误当推送登记地址 | 应写当前 Client 提供给 SSO Server 调用的推送入口，demo 是 `/api/sso/pushS` |
+| 使用历史配置名 | 当前配置项是 `reg-logout-call` |
 
-### 第三步：实现 2 个必须 SPI
+### 4.3 实现用户映射：`SsoUserMappingService`
 
-#### `SsoUserMappingService`：用户 ID 映射
+这是后端接入的第一个必选扩展点。
 
-SSO Server 有自己的用户 ID，业务系统也有自己的用户 ID。这个接口负责双向转换，并处理 Server 推来的注册同步消息。
+SSO Server 认识的是统一身份用户，本业务系统认识的是本地用户。`SsoUserMappingService` 的作用就是在两者之间做转换。
+
+接口定义：
 
 ```java
-import cn.dev33.satoken.sso.message.SaSsoMessage;
-import com.sz.ssoclient.spi.SsoUserMappingService;
-import com.sz.ssocore.SsoUserMeta;
-import com.sz.ssocore.SsoUserMetaUtils;
-import lombok.RequiredArgsConstructor;
-import org.springframework.stereotype.Component;
+public interface SsoUserMappingService {
 
-@Component
-@RequiredArgsConstructor
-public class SsoUserMappingServiceImpl implements SsoUserMappingService {
+    Object toServerUserId(Object clientUserId);
 
-    private final SysUserService userService;
+    Object toClientUserId(Object serverUserId);
+
+    Object syncSsoRegisterUser(SaSsoMessage message, String client);
+}
+```
+
+你需要实现三个动作：
+
+| 方法 | 什么时候用 | 你要做什么 |
+| --- | --- | --- |
+| `toServerUserId` | 本地用户同步到 SSO 时 | 根据本地用户 ID 找到对应的 SSO 用户 ID |
+| `toClientUserId` | SSO 登录回业务系统时 | 根据 SSO 用户 ID 找到或创建本地用户，并返回本地用户 ID |
+| `syncSsoRegisterUser` | SSO Server 推送新注册用户时 | 在本系统创建或关联本地用户 |
+
+示例写法：
+
+```java
+@Service
+public class DemoSsoUserMappingService implements SsoUserMappingService {
+
+    private final DemoUserService demoUserService;
+
+    public DemoSsoUserMappingService(DemoUserService demoUserService) {
+        this.demoUserService = demoUserService;
+    }
 
     @Override
     public Object toServerUserId(Object clientUserId) {
-        return userService.getSsoCenterId(Long.valueOf(clientUserId.toString()));
+        return demoUserService.findServerUserIdByClientUserId(clientUserId);
     }
 
     @Override
     public Object toClientUserId(Object serverUserId) {
-        return userService.findOrCreateByCenterId(Long.valueOf(serverUserId.toString()));
+        return demoUserService.findOrCreateClientUserIdByServerUserId(serverUserId);
     }
 
     @Override
-    public void syncSsoRegisterUser(SaSsoMessage message) {
-        SsoUserMeta meta = SsoUserMetaUtils.fromEntries(message.getDataMap().entrySet());
-        userService.syncFromSso(meta);
+    public Object syncSsoRegisterUser(SaSsoMessage message, String client) {
+        return demoUserService.createUserFromSsoMessage(message, client);
     }
 }
 ```
 
-#### `SsoClientLoginAdapter<U>`：构建用户并创建登录态
+实现建议：
 
-这个接口决定 ticket 登录成功后，业务系统最终怎么登录。
+- 已存在本地用户时，优先复用本地用户，不要重复创建。
+- 创建本地用户后，要保存 SSO 用户 ID 与本地用户 ID 的映射关系。
+- 如果你暂时没有用户表扩展字段，可以先建一张映射表保存关系。
+- `toClientUserId` 是登录链路关键方法，失败会导致 ticket 换 token 失败。
+
+### 4.4 实现登录适配：`SsoClientLoginAdapter`
+
+这是后端接入的第二个必选扩展点。
+
+Starter 负责完成 SSO 协议流程，但它不知道你的系统使用什么登录用户对象，也不知道你的系统返回给前端的 token 结构。因此需要你实现 `SsoClientLoginAdapter`。
+
+接口定义：
 
 ```java
-import cn.dev33.satoken.stp.StpUtil;
-import cn.dev33.satoken.stp.parameter.SaLoginParameter;
-import com.sz.core.common.entity.LoginUser;
-import com.sz.security.core.util.LoginUtils;
-import com.sz.ssoclient.pojo.SsoLoginResult;
-import com.sz.ssoclient.spi.SsoClientLoginAdapter;
-import lombok.RequiredArgsConstructor;
-import org.springframework.stereotype.Component;
+public interface SsoClientLoginAdapter<U> {
 
-@Component
-@RequiredArgsConstructor
-public class SsoClientLoginAdapterImpl implements SsoClientLoginAdapter<LoginUser> {
+    U buildLoginUser(Long userId);
 
-    private final SysUserService userService;
-
-    @Override
-    public LoginUser buildLoginUser(Long userId) {
-        return userService.buildLoginUser(userId);
-    }
-
-    @Override
-    public SsoLoginResult createLoginResult(LoginUser loginUser, SaLoginParameter parameter, Object loginId) {
-        LoginUtils.performLogin(loginUser, parameter, null);
-        return SsoLoginResult.of(StpUtil.getTokenValue(), StpUtil.getTokenTimeout(), loginUser);
-    }
+    Object createLoginResult(U user, SaLoginParameter parameter, Object loginId);
 }
 ```
 
-只实现这两个 SPI，Starter 的基础登录链路就能启动。
+两个方法分别做：
 
-### 第四步：按需实现角色相关 SPI
+| 方法 | 你要做什么 |
+| --- | --- |
+| `buildLoginUser` | 根据本地用户 ID 查询并构建业务系统自己的登录用户对象 |
+| `createLoginResult` | 生成返回给前端的登录结果，通常包含 `accessToken` |
 
-#### `SsoClientRoleProvider`：提供默认角色 key
-
-```java
-import com.sz.ssoclient.spi.SsoClientRoleProvider;
-import org.springframework.stereotype.Component;
-
-@Component
-public class SsoClientRoleProviderImpl implements SsoClientRoleProvider {
-
-    @Override
-    public String getDefaultRoleKey() {
-        return "dict_menu";
-    }
-}
-```
-
-不实现时，首次登录默认角色初始化会跳过。
-
-#### `SsoRoleBindingService`：执行本地角色和超管同步
+示例写法：
 
 ```java
-import com.sz.ssoclient.spi.SsoRoleBindingService;
-import org.springframework.stereotype.Service;
-
 @Service
-public class SsoRoleBindingServiceImpl implements SsoRoleBindingService {
+public class DemoSsoClientLoginAdapter implements SsoClientLoginAdapter<DemoLoginUser> {
 
-    @Override
-    public void applyDefaultRole(Long localUserId, String defaultRoleKey) {
-        // 用户没有任何角色时，按 defaultRoleKey 写入本地默认角色。
+    private final DemoUserService demoUserService;
+
+    public DemoSsoClientLoginAdapter(DemoUserService demoUserService) {
+        this.demoUserService = demoUserService;
     }
 
     @Override
-    public void applySuperAdmin(Long localUserId, boolean isSuperAdmin) {
-        // 将平台认定的 Client 超管状态同步到本地用户标记、角色或权限表。
+    public DemoLoginUser buildLoginUser(Long userId) {
+        return demoUserService.buildLoginUser(userId);
+    }
+
+    @Override
+    public Object createLoginResult(DemoLoginUser user, SaLoginParameter parameter, Object loginId) {
+        return Map.of(
+            "accessToken", StpUtil.getTokenValue(),
+            "userId", user.getUserId(),
+            "username", user.getUsername()
+        );
     }
 }
 ```
 
-不实现时，Starter 会注册 `com.sz.ssoclient.sync.DefaultSsoRoleBindingService`，只打印日志，不写业务库。
+前端 SDK 默认会读取后端返回数据中的 `accessToken`：
 
----
+```ts
+onLoginSuccess: data => {
+  userStore.setToken(data.accessToken);
+}
+```
 
-## 登录流程
+所以如果你不改前端逻辑，后端返回结果里应包含 `accessToken`。
 
-Starter 的登录流程是“先写本地权限状态，再构建登录用户”。这样 `buildLoginUser()` 从数据库读取用户信息时，已经能读到前面同步好的默认角色和超管状态。
+### 4.5 Starter 自动提供的端点
+
+引入 Starter 后，Client 后端会提供这些端点：
+
+| 端点 | 调用方 | 作用 |
+| --- | --- | --- |
+| `GET /sso/isLogin` | 前端或调试工具 | 判断当前是否登录 |
+| `GET /sso/getSsoAuthUrl` | 前端或调试工具 | 获取认证中心登录地址 |
+| `GET /sso/doLoginByTicket` | Web SDK | 使用 `ticket` 完成 SSO 登录 |
+| `GET /sso/getSsoPortalUrl` | Web SDK / 用户菜单 | 为当前已登录 Client 用户申请认证中心个人门户一次性入口 |
+| `POST /sso/logout` | 业务前端 | 退出当前 Client 登录态，并联动 SSO 登出逻辑 |
+| `/sso/logoutCall` | SSO Server | 单点登出回调 |
+| `/sso/pushC` | SSO Server | Sa-Token SSO Client 消息接收入口 |
+
+> 在常规前端接入中，Web SDK 最关键调用的是 `/sso/doLoginByTicket`。业务系统自己的退出按钮应调用 `/sso/logout`。头像菜单进入认证中心个人门户时，应调用 `/sso/getSsoPortalUrl`，不要直接拼认证中心 `/ucenter/*` 地址。
+
+### 4.6 后端登录内部流程
+
+理解这个流程有助于你排查问题：
 
 ```text
-ticket 校验通过
-        |
-        v
-PrepareLoginParameterStep
-解析 loginId、deviceId、timeout
-        |
-        v
-ApplyDefaultRoleStep
-可选：首次登录默认角色初始化
-        |
-        v
-QuerySuperAdminStep
-向 Server 查询当前用户是否为本 Client 超管
-        |
-        v
-ApplySuperAdminStep
-可选：把超管状态同步到本地权限体系
-        |
-        v
-BuildLoginUserStep
-从本地 DB 构建完整 LoginUser
-        |
-        v
-CreateLoginResultStep
-创建本地登录态，返回 SsoLoginResult
-        |
-        v
-WriteTokenSessionStep
-写入 TokenSession: isSuperAdmin
+/sso/doLoginByTicket
+  -> 校验 ticket
+  -> 从 SSO Server 拿到 SSO 用户信息
+  -> SsoUserMappingService.toClientUserId
+  -> 应用默认角色
+  -> 查询并同步 Client 超管身份
+  -> SsoClientLoginAdapter.buildLoginUser
+  -> Sa-Token 写入登录态
+  -> SsoClientLoginAdapter.createLoginResult
+  -> 写入 TokenSession
+  -> 返回登录结果给前端
 ```
 
-登录时任何可选步骤异常都会降级并记录 warn 日志，不会中断 ticket 登录。超管查询失败时，默认按非超管处理。
+如果登录失败，优先排查：
 
----
+1. `ticket` 是否传到 `/sso/doLoginByTicket`。
+2. `server-url` 是否能访问 SSO Server。
+3. `client` 是否与 SSO Server 登记一致。
+4. `SsoUserMappingService.toClientUserId` 是否正确返回本地用户 ID。
+5. `SsoClientLoginAdapter.createLoginResult` 是否返回了前端需要的 `accessToken`。
 
-## 自动注册的端点
+## 五、P0：前端接入 Web Client SDK
 
-Starter 会自动注册 `/sso` 前缀下的 Client 端点，已标注 `@SaIgnore`：
+前端接入的目标是：未登录时进入 `/sso-login`，SDK 自动跳认证中心；认证中心回跳后，SDK 自动拿 `ticket` 调后端换 token。
 
-| 方法 | 路径 | 说明 |
-| --- | --- | --- |
-| `GET` | `/sso/isLogin` | 查询当前登录状态 |
-| `GET` | `/sso/getSsoAuthUrl` | 生成认证中心跳转地址 |
-| `GET` | `/sso/doLoginByTicket` | ticket 校验并完成本地登录 |
-| `ANY` | `/sso/logout` | 发起单点注销 |
-| `ANY` | `/sso/logoutCall` | 接收 Server 单点注销回调 |
-| `ANY` | `/sso/pushC` | 接收 Server 消息推送 |
+### 5.1 安装依赖
 
-接口响应使用 `com.sz.ssocore.dto.SsoApiResult`，JSON 结构为：
+在业务前端工程中安装：
+
+```bash
+pnpm add sz-sso-client-web-sdk
+```
+
+demo 开发阶段使用本地依赖：
 
 ```json
-{ "code": "0000", "message": "SUCCESS", "data": {}, "param": {} }
+{
+  "dependencies": {
+    "sz-sso-client-web-sdk": "file:../../sso/sz-sso-client-web-sdk"
+  }
+}
 ```
 
----
+### 5.2 创建 SSO Client
 
-## Client 主动同步超管变更
+在前端入口文件中创建 SDK Client：
 
-当业务系统本地变更某个用户的超管身份后，可以调用 `SsoSyncHelper` 通知 Server。
+```ts
+import { createSsoClient } from 'sz-sso-client-web-sdk';
+import { createSsoPlugin } from 'sz-sso-client-web-sdk/vue';
+import 'sz-sso-client-web-sdk/style.css';
+
+const ssoClient = createSsoClient({
+  clientFlag: import.meta.env.VITE_SSO_CLIENT_FLAG || 'sso-client3',
+  ssoClientApiBaseUrl: import.meta.env.VITE_API_CONTEXT_PATH || '/api',
+  authCenterBaseUrl: import.meta.env.VITE_UCENTER_URL,
+  onLoginSuccess: data => {
+    userStore.setToken(data.accessToken);
+  },
+});
+
+app.use(createSsoPlugin(ssoClient));
+```
+
+关键点：
+
+| 配置 | 示例 | 说明 |
+| --- | --- | --- |
+| `clientFlag` | `sso-client3` | 与后端 `sa-token.sso-client.client` 保持一致 |
+| `ssoClientApiBaseUrl` | `/api` | Web SDK 请求 Client 后端的基础路径 |
+| `authCenterBaseUrl` | `http://127.0.0.1:3310` | 认证中心前端地址 |
+| `onLoginSuccess` | `userStore.setToken(data.accessToken)` | 换票成功后，把后端 token 写入业务系统状态 |
+
+### 5.3 注册 SDK 路由
+
+在你的静态路由中加入：
+
+```ts
+import { getSsoRoutes } from 'sz-sso-client-web-sdk/vue';
+
+export const staticRouter = [
+  // 你的业务路由
+  ...getSsoRoutes(),
+];
+```
+
+SDK 默认提供两个路由：
+
+| 路由 | 作用 |
+| --- | --- |
+| `/sso-login` | SSO 登录回调页，也是业务系统触发 SSO 登录的入口 |
+| `/sso-forbidden` | SSO 登录成功但无权限时的兜底页 |
+
+### 5.4 加入路由白名单
+
+如果你的项目有路由守卫，需要把 SDK 路由加入白名单：
+
+```ts
+import {
+  SSO_CALLBACK_PATH,
+  SSO_FORBIDDEN_PATH,
+} from 'sz-sso-client-web-sdk/vue';
+
+export const LOGIN_WHITE_LIST = [
+  '/login',
+  SSO_CALLBACK_PATH,
+  SSO_FORBIDDEN_PATH,
+];
+```
+
+不加白名单时，常见现象是：
+
+- `/sso-login` 还没来得及处理 `ticket`，就被业务路由守卫拦回 `/login`。
+- 认证中心登录成功后，前端页面来回跳转。
+
+### 5.5 业务登录页跳转 `/sso-login`
+
+业务系统的登录页不需要自己拼认证中心地址，只需要跳 SDK 回调页：
+
+```ts
+router.push({
+  path: '/sso-login',
+  query: {
+    back: route.query.redirect || '/',
+  },
+});
+```
+
+SDK 会自动判断：
+
+| 当前 URL 状态 | SDK 行为 |
+| --- | --- |
+| 没有 `ticket` | 生成认证中心登录地址并跳转 |
+| 有 `ticket` | 调用后端 `/sso/doLoginByTicket` 换 token |
+| 后端返回 `O4031` | 跳转 `/sso-forbidden` |
+| 登录成功 | 执行 `onLoginSuccess`，再回到 `back` 地址 |
+
+### 5.6 退出登录
+
+退出登录由业务系统主动完成。推荐顺序：
+
+1. 调用 Client 后端 `/sso/logout`。
+2. 清理前端 token。
+3. 清理用户信息、菜单、按钮权限、动态路由。
+4. 断开 WebSocket 或其他长连接。
+5. 跳回业务登录页或首页。
+
+示例：
+
+```ts
+await logoutApi();
+userStore.setToken('');
+userStore.setUserInfo(null);
+authStore.clearAuth();
+websocket.close();
+router.replace('/login');
+```
+
+后端 demo 的退出接口是：
+
+```ts
+export const logoutApi = () => {
+  return http.post('/sso/logout');
+};
+```
+
+## 六、P0 最小联调清单
+
+完成 P0 后，按下面顺序验证。
+
+### 6.1 后端检查
+
+| 检查项 | 预期 |
+| --- | --- |
+| 后端启动成功 | 没有缺少 `SsoUserMappingService` 或 `SsoClientLoginAdapter` 的 Bean 错误 |
+| 访问 `/sso/isLogin` | 能返回 SDK 标准响应 |
+| 访问 `/sso/getSsoAuthUrl` | 返回的地址指向认证中心登录页 |
+| 配置 `server-url` | 能连通 SSO Server 后端 API |
+| 配置 `push-url` | 指向当前 Client 可被 SSO Server 访问的推送地址 |
+
+### 6.2 前端检查
+
+| 检查项 | 预期 |
+| --- | --- |
+| `/sso-login` 路由存在 | 访问时不会 404 |
+| `/sso-login` 在白名单中 | 不会被路由守卫拦截 |
+| 未带 `ticket` 访问 `/sso-login` | 自动跳认证中心 |
+| 带 `ticket` 回跳 `/sso-login` | 调用 Client 后端 `/sso/doLoginByTicket` |
+| `onLoginSuccess` 执行 | 前端 token 被写入 store |
+
+### 6.3 端到端检查
+
+最小成功路径：
+
+1. 清空浏览器本业务系统 token。
+2. 访问业务系统受保护页面。
+3. 前端跳到业务登录页或直接跳 `/sso-login`。
+4. SDK 跳到认证中心。
+5. 用户在认证中心登录。
+6. 认证中心回跳 `/sso-login?ticket=xxx&back=xxx`。
+7. 前端调用 `/api/sso/doLoginByTicket?ticket=xxx`。
+8. 后端返回包含 `accessToken` 的登录结果。
+9. 前端保存 token。
+10. 页面回到原始 `back` 地址。
+
+## 七、P1：角色与权限接入
+
+P0 跑通后，再接 P1。P1 的目标是让登录用户在本系统里拥有正确角色和权限。
+
+### 7.1 默认角色：`SsoClientRoleProvider`
+
+如果所有 SSO 登录用户都应该自动获得某些基础角色，可以实现：
 
 ```java
-import com.sz.ssoclient.sync.SsoSyncHelper;
-import org.springframework.beans.factory.annotation.Autowired;
+public interface SsoClientRoleProvider {
 
-@Autowired(required = false)
-private SsoSyncHelper ssoSyncHelper;
+    Collection<String> getDefaultRoleCodes();
+}
+```
 
-public void changeUserTag(Long localUserId, boolean isSuperAdmin) {
-    // 1. 先完成本地 DB 更新。
+示例：
 
-    // 2. 再通知 Server。非 SSO 环境下此 Bean 可能不存在。
-    if (ssoSyncHelper != null) {
-        ssoSyncHelper.syncSuperAdmin(localUserId, isSuperAdmin);
+```java
+@Service
+public class DemoSsoClientRoleProvider implements SsoClientRoleProvider {
+
+    @Override
+    public Collection<String> getDefaultRoleCodes() {
+        return List.of("common_user");
     }
 }
 ```
 
-`syncSuperAdmin()` 是异步方法，失败只记录 warn 日志，不回滚本地业务操作。
+使用场景：
 
----
+- SSO 登录用户默认拥有“普通用户”角色。
+- 新注册同步过来的用户需要一个基础角色才能进入系统。
 
-## 常用工具与常量
+注意：
 
-### `SsoClientUtil`
+- 默认角色适合放“基础可用权限”。
+- 不建议把高权限角色放入默认角色。
 
-```java
-import com.sz.ssoclient.SsoClientUtil;
+### 7.2 Client 超管识别：`SsoRoleBindingService`
 
-boolean isSuperAdmin = SsoClientUtil.isSuperAdmin();
-```
+SSO Server 可以维护某个用户是否是某个 Client 的超级管理员。Client 登录时，Starter 会查询并同步这个信息。
 
-这个值来自当前 TokenSession 中的 `isSuperAdmin`。未登录、TokenSession 不存在或查询失败时返回 `false`。
-
-### core 常量
-
-协议常量统一由 `sz-sso-core` 提供：
+如果你的本地系统需要把“Client 超管”绑定到本地角色，实现：
 
 ```java
-import com.sz.ssocore.SsoMessageTypes;
-import com.sz.ssocore.SsoProtocolFields;
+public interface SsoRoleBindingService {
 
-SsoMessageTypes.REGISTER
-SsoMessageTypes.USER_CHECK
-SsoMessageTypes.QUERY_USER_ROLES
-SsoMessageTypes.SYNC_SUPER_ADMIN
-SsoMessageTypes.SYNC_CLIENT_SUPER_ADMIN
+    Collection<String> listRoleCodesByUserId(Long userId);
 
-SsoProtocolFields.IS_SUPER_ADMIN // "isSuperAdmin"
+    void bindSuperAdminRole(Long userId);
+
+    void unbindSuperAdminRole(Long userId);
+}
 ```
 
-### 用户元信息
+典型逻辑：
+
+| 方法 | 作用 |
+| --- | --- |
+| `listRoleCodesByUserId` | 查询本地用户当前角色 |
+| `bindSuperAdminRole` | 给本地用户绑定超管角色 |
+| `unbindSuperAdminRole` | 取消本地用户超管角色 |
+
+登录链路中，Starter 会通过 SSO 消息查询用户是否是当前 Client 超管。消息类型来自 core：
 
 ```java
-import com.sz.ssocore.SsoUserMeta;
-import com.sz.ssocore.SsoUserMetaUtils;
-
-SsoUserMeta meta = SsoUserMetaUtils.fromEntries(message.getDataMap().entrySet());
+QUERY_USER_ROLES
 ```
 
-`SsoUserMeta` 包含：`ssoUserId`、`username`、`nickname`、`email`、`phone`、`avatarUrl`、`createTime`。
+如果 SSO Server 返回该用户是 Client 超管，Starter 会调用 `bindSuperAdminRole`；否则会调用 `unbindSuperAdminRole`。
 
----
+### 7.3 业务代码判断是否超管
 
-## 自动装配条件
+登录完成后，Starter 会把超管状态写入 TokenSession。业务代码可以通过工具方法判断：
 
-Starter 只有在业务系统已经提供必须 SPI 时才激活核心登录能力：
-
-| 条件 | 说明 |
-| --- | --- |
-| classpath 存在 `SaSsoClientTemplate` | 已引入 Sa-Token SSO |
-| 存在 `SsoUserMappingService` Bean | 业务方提供用户映射 |
-| 存在 `SsoClientLoginAdapter` Bean | 业务方提供登录适配 |
-
-缺少必须 SPI 时，启动阶段会给出更明确的失败提示，避免运行时才发现登录链路不可用。
-
----
-
-## 包结构说明
-
-| 包 | 职责 |
-| --- | --- |
-| `com.sz.ssoclient` | 根包，目前只保留 `SsoClientUtil` |
-| `com.sz.ssoclient.spi` | 业务系统实现的扩展点 |
-| `com.sz.ssoclient.sync` | Client 主动同步工具和默认角色绑定实现 |
-| `com.sz.ssoclient.message` | 消息发送、拦截、分发和处理器接口 |
-| `com.sz.ssoclient.message.handler` | Starter 内置消息处理器 |
-| `com.sz.ssoclient.login` | 登录上下文、步骤接口和编排器 |
-| `com.sz.ssoclient.login.step` | 默认登录步骤实现 |
-| `com.sz.ssoclient.autoconfigure` | Spring Boot 自动配置 |
-| `com.sz.ssoclient.pojo` | Starter 专属 DTO，如 `SsoLoginResult`、`LoginStatus` |
-
-更完整的设计说明见：[docs/starter-refactor-design.md](docs/starter-refactor-design.md)。
-
----
-
-## 从旧包名迁移
-
-本次重构已删除 starter 根包下的兼容代理类。如果旧项目使用过早期 import，请按下表迁移：
-
-| 旧导入 | 新导入 |
-| --- | --- |
-| `com.sz.ssoclient.SsoClientLoginAdapter` | `com.sz.ssoclient.spi.SsoClientLoginAdapter` |
-| `com.sz.ssoclient.SsoUserMappingService` | `com.sz.ssoclient.spi.SsoUserMappingService` |
-| `com.sz.ssoclient.SsoClientRoleProvider` | `com.sz.ssoclient.spi.SsoClientRoleProvider` |
-| `com.sz.ssoclient.SsoRoleBindingService` | `com.sz.ssoclient.spi.SsoRoleBindingService` |
-| `com.sz.ssoclient.SsoMessageSender` | `com.sz.ssoclient.message.SsoMessageSender` |
-| `com.sz.ssoclient.SsoServerMessageHandler` | `com.sz.ssoclient.message.SsoServerMessageHandler` |
-| `com.sz.ssoclient.SsoSyncHelper` | `com.sz.ssoclient.sync.SsoSyncHelper` |
-| `com.sz.ssoclient.DefaultSsoRoleBindingService` | `com.sz.ssoclient.sync.DefaultSsoRoleBindingService` |
-| `com.sz.ssoclient.SsoClientSuperAdminSyncHandler` | `com.sz.ssoclient.message.handler.SsoClientSuperAdminSyncHandler` |
-| `com.sz.ssoclient.SsoUserMeta` | `com.sz.ssocore.SsoUserMeta` |
-| `com.sz.ssoclient.SsoUserMetaUtils` | `com.sz.ssocore.SsoUserMetaUtils` |
-| `com.sz.ssoclient.SsoCoreConstant` | `com.sz.ssocore.SsoMessageTypes` / `com.sz.ssocore.SsoProtocolFields` |
-| `com.sz.ssoclient.pojo.SsoApiResult` | `com.sz.ssocore.dto.SsoApiResult` |
-
----
-
-## 本地验证
-
-```powershell
-# 安装 core
-E:\opt\apache-maven-3.9.6-bin\apache-maven-3.9.6\bin\mvn.cmd -f E:\dev\Code\Github\sso\sz-sso-core\pom.xml clean install
-
-# 编译并测试 starter
-E:\opt\apache-maven-3.9.6-bin\apache-maven-3.9.6\bin\mvn.cmd -f E:\dev\Code\Github\sso\sz-sso-client-starter\pom.xml clean install
-
-# 联动编译 sso-server
-E:\opt\apache-maven-3.9.6-bin\apache-maven-3.9.6\bin\mvn.cmd -f E:\dev\Code\Github\szdev\sz-sso-server\pom.xml clean compile -DskipTests
+```java
+boolean superAdmin = SsoClientUtil.isSuperAdmin();
 ```
 
-## 版本要求
+适合用于：
 
-| 依赖 | 版本 |
+- 菜单过滤。
+- 操作权限判断。
+- 页面按钮权限判断。
+
+### 7.4 本地变更同步回 SSO Server
+
+如果你在 Client 本地修改了某个用户的超管状态，需要同步回 SSO Server，可以使用：
+
+```java
+SsoSyncHelper.syncSuperAdmin(centerId, true);
+SsoSyncHelper.syncSuperAdmin(centerId, false);
+```
+
+注意这里的 `centerId` 是 **SSO Server 用户 ID**，不是本地用户 ID。通常你需要先通过本地映射表找到对应的 SSO 用户 ID。
+
+## 八、P1：前端用户菜单
+
+Web SDK 提供了可选的 `SsoUserMenu` 组件，用于快速接入统一风格的用户菜单。
+
+菜单中的「账号与安全」「个人中心」不是普通外链。它们会先调用当前 Client 后端的 `/sso/getSsoPortalUrl`，由后端确认当前 Client 用户已登录、找到对应的 SSO 用户 ID，再向 SSO Server 申请一个 60 秒内有效、只能使用一次的 portal ticket。认证中心收到 `/portal-login?ticket=xxx&_back=/ucenter/applications` 后消费票据并写入认证中心登录态，最后进入目标页面。
+
+这样设计的原因是：Client 站点和认证中心站点可能使用不同域名、IP 或端口，浏览器 Cookie 不能天然共享。**不要依赖 `127.0.0.1:9800` 与 `127.0.0.1:3310`、域名与 IP、或不同子域之间的 Cookie 共享来判断认证中心是否登录**。产品化接入应显式走 portal ticket，登录态由认证中心自己写入。
+
+安全约束：
+
+| 约束 | 当前实现 |
 | --- | --- |
-| Java | 21+ |
-| Spring Boot | 3.x |
-| Sa-Token | 1.45.0 |
+| 票据来源 | 只能由已登录的 Client 后端申请 |
+| 用户身份 | 通过 `SsoUserMappingService.toServerUserId` 从本地用户映射到 SSO 用户 |
+| Client 权限 | SSO Server 会检查该用户是否允许从当前 Client 进入认证中心 |
+| 有效期 | portal ticket 默认 60 秒 |
+| 使用次数 | ticket 被认证中心消费后立即失效 |
+| 跳转范围 | 只允许 `/ucenter/applications`、`/ucenter/profile`、`/ucenter/password`、`/ucenter/login-log` |
+基础用法：
+
+```vue
+<template>
+  <SsoUserMenu
+    :display-name="userInfo.nickname"
+    :username="userInfo.username"
+    @logout="handleLogout"
+  />
+</template>
+
+<script setup lang="ts">
+import { SsoUserMenu } from 'sz-sso-client-web-sdk/vue';
+import 'sz-sso-client-web-sdk/style.css';
+
+const handleLogout = async () => {
+  await logoutApi();
+  userStore.setToken('');
+};
+</script>
+```
+
+更多交互规范、插槽和样式建议见：
+
+```text
+docs/sso-user-menu-integration.md
+```
+
+如果你的系统已经有成熟的头像菜单，可以不使用该组件，只保留 SDK 的登录回调能力。
+
+## 九、P2：扩展消息能力
+
+当 P0、P1 稳定后，再考虑 P2。
+
+SSO Server 与 Client 之间的扩展通讯基于 Sa-Token SSO message。当前已经落地的常见消息包括：
+
+| 消息 | 方向 | 作用 |
+| --- | --- | --- |
+| `PUSH_REGISTER_USER` | Server -> Client | 推送 SSO 新注册用户到 Client |
+| `QUERY_USER_ROLES` | Client -> Server | 查询用户在当前 Client 下的角色或超管信息 |
+| `SYNC_USER_ROLES` | Client -> Server | 同步 Client 本地角色变化到 SSO Server |
+| `CREATE_PORTAL_TICKET` | Client -> Server | 为已登录 Client 用户申请认证中心个人门户一次性入口 |
+
+如果需要扩展新的消息，建议遵循：
+
+1. 在 core 中定义清晰的消息类型和字段常量。
+2. Server 侧实现对应 message handler。
+3. Client 侧只做必要业务适配，不直接耦合 Server 数据库。
+4. 先用 demo 验证消息参数和返回结构，再沉淀到 SDK 文档。
+
+## 十、配置速查
+
+### 10.1 后端配置
+
+| 配置项 | 必填 | 示例 | 说明 |
+| --- | --- | --- | --- |
+| `sa-token.sso-client.client` | 是 | `sso-client3` | Client 标识 |
+| `sa-token.sso-client.server-url` | 是 | `http://127.0.0.1:5001/api/sso` | SSO Server 后端 API |
+| `sa-token.sso-client.auth-url` | 是 | `http://127.0.0.1:3310/login` | 认证中心前端登录页 |
+| `sa-token.sso-client.reg-logout-call` | 建议开启 | `true` | 是否注册单点登出回调 |
+| `sa-token.sso-client.push-url` | 建议配置 | `http://127.0.0.1:5001/api/sso/pushS` | 当前 Client 提供给 Server 的推送地址 |
+
+### 10.2 前端配置
+
+| 配置项 | 必填 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `clientFlag` | 是 | 无 | Client 标识，对齐后端 `client` |
+| `ssoClientApiBaseUrl` | 是 | 无 | Client 后端 API 基础路径 |
+| `authCenterBaseUrl` | 是 | 无 | 认证中心前端地址 |
+| `callbackPath` | 否 | `/sso-login` | 登录回调路由 |
+| `portalRoutes.login` | 否 | `/login` | 认证中心登录页路径 |
+| `portalRoutes.security` | 否 | `/ucenter/password` | 认证中心账号与安全路径 |
+| `portalRoutes.applications` | 否 | `/ucenter/applications` | 认证中心个人中心/我的应用路径 |
+| `endpoints.loginByTicket` | 否 | `/sso/doLoginByTicket` | ticket 换 token 端点 |
+| `endpoints.portalUrl` | 否 | `/sso/getSsoPortalUrl` | 获取认证中心个人门户一次性入口 |
+| `successCode` | 否 | `0000` | 后端业务成功码 |
+| `fetchCredentials` | 否 | `same-origin` | fetch credentials 配置 |
+| `onLoginSuccess` | 是 | 无 | 换票成功后的业务回调 |
+
+## 十一、推荐目录改动清单
+
+如果你正在接入一个新的业务系统，通常会修改这些位置。
+
+### 11.1 Java 后端
+
+| 文件 | 动作 |
+| --- | --- |
+| `pom.xml` | 添加 `sz-sso-client-starter` 依赖 |
+| `application.yml` 或 profile 配置 | 增加 `sa-token.sso-client` 配置 |
+| 用户模块 Service | 增加 SSO 用户与本地用户映射查询或创建逻辑 |
+| 新增实现类 | 实现 `SsoUserMappingService` |
+| 新增实现类 | 实现 `SsoClientLoginAdapter` |
+| 可选实现类 | 实现 `SsoClientRoleProvider` |
+| 可选实现类 | 实现 `SsoRoleBindingService` |
+
+### 11.2 Vue 前端
+
+| 文件 | 动作 |
+| --- | --- |
+| `package.json` | 添加 `sz-sso-client-web-sdk` |
+| `main.ts` | 创建 `createSsoClient` 并注册 `createSsoPlugin` |
+| 静态路由文件 | 加入 `...getSsoRoutes()` |
+| 路由守卫或白名单配置 | 加入 `SSO_CALLBACK_PATH`、`SSO_FORBIDDEN_PATH` |
+| 登录页 | SSO 登录按钮跳 `/sso-login?back=xxx` |
+| 退出逻辑 | 调 `/sso/logout` 后清理本地 store、路由、权限、连接 |
+| 可选布局组件 | 接入 `SsoUserMenu` |
+
+## 十二、常见问题
+
+### 12.1 前端一直在登录页和 `/sso-login` 之间跳转
+
+优先检查：
+
+- `/sso-login` 是否加入路由白名单。
+- `getSsoRoutes()` 是否注册到静态路由。
+- 业务登录页是否正确传递 `back`。
+- 认证中心回跳地址是否是业务前端地址，而不是后端地址。
+
+### 12.2 `/sso/doLoginByTicket` 返回失败
+
+优先检查：
+
+- `ticket` 是否已经过期或被重复使用。
+- 后端 `server-url` 是否正确。
+- `client` 是否与 SSO Server 登记一致。
+- `SsoUserMappingService.toClientUserId` 是否返回本地用户 ID。
+- 本地用户是否被禁用、删除或缺少必要状态。
+
+### 12.3 前端保存 token 后仍然无权限
+
+优先检查：
+
+- `onLoginSuccess` 是否确实写入了业务系统原本使用的 token store。
+- 后端返回字段是否叫 `accessToken`。
+- 菜单、角色、按钮权限是否在登录后重新拉取。
+- 动态路由是否在 SSO 登录成功后重新挂载。
+
+### 12.4 退出后又自动登录回来
+
+优先检查：
+
+- 是否只清了本地 token，没有调用 `/sso/logout`。
+- 是否没有清理菜单权限和动态路由。
+- 是否存在未关闭的 WebSocket 或轮询把旧状态写回 store。
+- 认证中心会话仍然有效时，业务侧是否设计为自动 SSO 登录。
+
+### 12.5 `push-url` 应该填什么
+
+`push-url` 是 SSO Server 调用当前 Client 的地址。demo 中填写：
+
+```yaml
+push-url: http://127.0.0.1:5001/api/sso/pushS
+```
+
+不要把它理解成 Starter 自动提供的 Sa-Token Client 消息入口。
+
+`/sso/pushC` 是 Starter 自动端点，用于接收 Sa-Token Client 消息。上面的登记地址则是当前系统对外登记给 Server 使用的推送地址，实际项目里通常会带网关前缀、服务前缀或部署域名。
+
+## 十三、最小可运行示例对照
+
+### 13.1 Java demo 关键位置
+
+| 位置 | 作用 |
+| --- | --- |
+| `config/local/sa-token.yml` | SSO Client 后端配置 |
+| `sz-service/sz-service-admin/pom.xml` | Starter 依赖示例 |
+| `SsoClientLoginAdapterImpl` | 登录用户构建与登录结果生成 |
+| `SysUserMappingServiceImpl` | SSO 用户与本地用户映射 |
+| `SsoClientRoleProviderImpl` | 默认角色示例 |
+| `SsoRoleBindingServiceImpl` | Client 超管角色绑定示例 |
+
+### 13.2 Web demo 关键位置
+
+| 位置 | 作用 |
+| --- | --- |
+| `package.json` | 本地 Web SDK 依赖 |
+| `src/main.ts` | `createSsoClient` 与插件注册 |
+| `src/router/modules/staticRouter.ts` | `getSsoRoutes()` 接入 |
+| `src/config/index.ts` | SSO 路由白名单 |
+| `src/views/login/index.vue` | 业务登录页跳 `/sso-login` |
+| `src/api/modules/system/login.ts` | `/sso/logout` 调用 |
+| `.env.development` | 前端环境变量示例 |
+
+## 十四、验证与构建建议
+
+本轮文档只要求说明接入方式，不强制构建。但实际接入时建议按下面顺序验证：
+
+### 14.1 后端
+
+```bash
+mvn compile -DskipTests
+```
+
+如果是多模块项目，建议只编译接入模块及其依赖：
+
+```bash
+mvn -pl <your-client-module> -am compile -DskipTests
+```
+
+### 14.2 前端
+
+```bash
+pnpm install
+pnpm type-check
+pnpm build
+```
+
+如果你只是本地联调，也可以先启动开发服务：
+
+```bash
+pnpm dev
+```
+
+## 十五、后续可讨论的 SDK 优化点
+
+当前文档按现有代码能力编写。后续如果要继续优化 SDK，可以讨论这些方向：
+
+1. 后端 Starter 增加更明确的启动期配置校验，提前提示缺少 `client`、`server-url`、`auth-url`。
+2. 后端 Starter 对常见映射失败、ticket 失败、Client 不匹配提供更友好的错误码和排查信息。
+3. Web SDK 增加更完整的 TypeScript 类型示例，让 `onLoginSuccess` 的返回结构更容易约束。
+4. Web SDK 增加退出辅助函数，但仍保留业务方清理 store、路由、权限、WebSocket 的控制权。
+5. 文档站后续可以将本文拆为“5 分钟快速开始”“Spring Boot 接入”“Vue 接入”“权限扩展”“故障排查”多个页面。
+
+## 十六、接入结论
+
+新业务系统接入 sz-sso 时，请先完成这 6 件事：
+
+1. 后端引入 `sz-sso-client-starter`。
+2. 后端配置 `sa-token.sso-client`。
+3. 后端实现 `SsoUserMappingService`。
+4. 后端实现 `SsoClientLoginAdapter`。
+5. 前端注册 `createSsoClient`、`createSsoPlugin`、`getSsoRoutes()`。
+6. 前端登录页跳 `/sso-login`，退出时调用 `/sso/logout` 并清理本地状态。
+
+完成后，你就拥有了最小可用的统一登录能力；再按业务需要逐步补充默认角色、Client 超管、用户菜单和消息扩展。

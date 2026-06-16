@@ -1,22 +1,27 @@
 package com.sz.ssoclient.controller;
 
 import cn.dev33.satoken.annotation.SaIgnore;
+import cn.dev33.satoken.sso.error.SaSsoErrorCode;
+import cn.dev33.satoken.sso.exception.SaSsoException;
+import cn.dev33.satoken.sso.message.SaSsoMessage;
 import cn.dev33.satoken.sso.model.SaCheckTicketResult;
 import cn.dev33.satoken.sso.processor.SaSsoClientProcessor;
 import cn.dev33.satoken.sso.template.SaSsoClientUtil;
+import cn.dev33.satoken.stp.StpLogic;
 import cn.dev33.satoken.stp.StpUtil;
+import cn.dev33.satoken.stp.parameter.SaLogoutParameter;
 import cn.dev33.satoken.util.SaResult;
 import com.sz.ssoclient.message.SsoMessageSender;
 import com.sz.ssoclient.pojo.LoginStatus;
 import com.sz.ssoclient.pojo.SsoLoginResult;
 import com.sz.ssoclient.service.SsoClientService;
 import com.sz.ssoclient.spi.SsoUserMappingService;
-import com.sz.ssocore.SsoMessageTypes;
 import com.sz.ssocore.dto.SsoApiResult;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -29,7 +34,7 @@ import java.util.Map;
  * SSO 客户端 Controller.
  * <p>
  * 提供 SSO 客户端的标准端点：登录状态检查、获取认证 URL、ticket 登录、
- * 单点注销、注销回调、消息推送接收。
+ * 本地会话退出、单点注销、注销回调、消息推送接收。
  * </p>
  * <p>
  * 所有有效载荷接口统一用 {@link SsoApiResult} 包装，与前端 axios 拦截器
@@ -121,11 +126,31 @@ public class SsoClientController {
         }
     }
 
-    // SSO-Client：单点注销地址
-    @RequestMapping("/logout")
-    public SsoApiResult<Void> ssoLogout() {
-        log.info("ssoLogout: 执行单点注销");
-        SaSsoClientProcessor.instance.ssoLogout();
+    // 当前 Client 本地会话退出，不通知 SSO 认证中心，不影响其它应用。
+    @PostMapping("/session/logout")
+    public SsoApiResult<Void> sessionLogout() {
+        log.info("sessionLogout: 执行当前 Client 本地会话退出");
+        StpLogic stpLogic = SaSsoClientProcessor.instance.ssoClientTemplate.getStpLogicOrGlobal();
+        if (stpLogic.isLogin()) {
+            stpLogic.getTokenSession().logout();
+            stpLogic.logout();
+        }
+        return SsoApiResult.success();
+    }
+
+    // 全端单点注销：通知 SSO 认证中心注销当前账号所有 Client 会话。
+    @PostMapping("/signout")
+    public SsoApiResult<Void> ssoSignout() {
+        log.info("ssoSignout: 执行全端单点注销");
+        pushSignout(false);
+        return SsoApiResult.success();
+    }
+
+    // 当前设备单点注销：仅注销同一账号同一 deviceId 分组下的 Client 会话。
+    @PostMapping("/signout/device")
+    public SsoApiResult<Void> ssoDeviceSignout() {
+        log.info("ssoDeviceSignout: 执行当前设备单点注销");
+        pushSignout(true);
         return SsoApiResult.success();
     }
 
@@ -142,6 +167,29 @@ public class SsoClientController {
         Object o = SaSsoClientProcessor.instance.ssoPushC();
         log.debug("ssoPushC: 消息推送处理完成");
         return o;
+    }
+
+    private void pushSignout(boolean currentDeviceOnly) {
+        StpLogic stpLogic = SaSsoClientProcessor.instance.ssoClientTemplate.getStpLogicOrGlobal();
+        if (!stpLogic.isLogin()) {
+            return;
+        }
+
+        SaLogoutParameter logoutParameter = stpLogic.createSaLogoutParameter();
+        if (currentDeviceOnly) {
+            logoutParameter.setDeviceId(stpLogic.getLoginDeviceId());
+        }
+        Object loginId = stpLogic.getLoginId();
+        Object centerId = SaSsoClientProcessor.instance.ssoClientTemplate.strategy.convertLoginIdToCenterId.run(loginId);
+        SaSsoMessage message = SaSsoClientProcessor.instance.ssoClientTemplate.buildSignoutMessage(centerId, logoutParameter);
+        SaResult result = SaSsoClientProcessor.instance.ssoClientTemplate.pushMessageAsSaResult(message);
+        if (result == null || result.getCode() == null || SaResult.CODE_SUCCESS != result.getCode()) {
+            String messageText = result == null ? "SSO Server 未返回单点注销结果" : result.getMsg();
+            throw new SaSsoException(messageText).setCode(SaSsoErrorCode.CODE_30006);
+        }
+        if (stpLogic.isLogin()) {
+            stpLogic.logout(loginId, logoutParameter);
+        }
     }
 
     private String buildPortalLoginUrl(String ticket, String targetPath) {

@@ -154,19 +154,41 @@ public interface SsoUserMappingService {
 
     Object toServerUserId(Object clientUserId);
 
+    /**
+     * 只做 SSO Server 用户 ID 到 Client 本地用户 ID 的 mapping 查询。
+     * 查不到建议返回 null；不要在这里调用 USER_CHECK、补 mapping 或创建本地用户。
+     */
     Object toClientUserId(Object serverUserId);
 
-    Object syncSsoRegisterUser(SaSsoMessage message, String client);
+    /**
+     * 身份同步、超管同步、角色同步使用。
+     * 可以查询中心用户元信息并唯一匹配已有本地用户后补 mapping，但不应创建用户。
+     */
+    default Object resolveExistingClientUser(Object serverUserId) {
+        return toClientUserId(serverUserId);
+    }
+
+    /**
+     * 登录票据转换使用。
+     * 可以先唯一匹配已有本地用户并补 mapping，必要时再创建本地用户。
+     */
+    default Object resolveOrProvisionClientUser(Object serverUserId) {
+        return toClientUserId(serverUserId);
+    }
+
+    void syncSsoRegisterUser(SaSsoMessage message, String client);
 }
 ```
 
-你需要实现三个动作：
+你需要实现五个动作：
 
 | 方法 | 什么时候用 | 你要做什么 |
 | --- | --- | --- |
 | `toServerUserId` | 本地用户同步到 SSO 时 | 根据本地用户 ID 找到对应的 SSO 用户 ID |
-| `toClientUserId` | SSO 登录回业务系统时 | 根据 SSO 用户 ID 找到或创建本地用户，并返回本地用户 ID |
-| `syncSsoRegisterUser` | SSO Server 推送新注册用户时 | 在本系统创建或关联本地用户 |
+| `toClientUserId` | Sa-Token / Starter 基础 ID 映射查询 | 只查映射；查不到返回 `null`；不要创建本地用户 |
+| `resolveExistingClientUser` | 超管同步、身份同步、角色同步 | 缺映射时可查询中心用户元信息，唯一匹配已有本地用户后补 mapping；不要创建用户 |
+| `resolveOrProvisionClientUser` | SSO 登录回业务系统时 | 先查映射，再唯一匹配已有用户并补 mapping；没有匹配且业务允许时才创建本地用户 |
+| `syncSsoRegisterUser` | SSO Server 推送新注册用户时 | 使用 provisioning lock，先关联已有本地用户，再按需创建本地用户 |
 
 示例写法：
 
@@ -187,22 +209,37 @@ public class DemoSsoUserMappingService implements SsoUserMappingService {
 
     @Override
     public Object toClientUserId(Object serverUserId) {
-        return demoUserService.findOrCreateClientUserIdByServerUserId(serverUserId);
+        return demoUserService.findMappedClientUserIdByServerUserId(serverUserId);
     }
 
     @Override
-    public Object syncSsoRegisterUser(SaSsoMessage message, String client) {
-        return demoUserService.createUserFromSsoMessage(message, client);
+    public Object resolveExistingClientUser(Object serverUserId) {
+        return demoUserService.resolveExistingClientUserId(serverUserId);
+    }
+
+    @Override
+    public Object resolveOrProvisionClientUser(Object serverUserId) {
+        return demoUserService.resolveOrProvisionClientUserId(serverUserId);
+    }
+
+    @Override
+    public void syncSsoRegisterUser(SaSsoMessage message, String client) {
+        demoUserService.syncRegisterUserFromSsoMessage(message, client);
     }
 }
 ```
 
 实现建议：
 
+- `toClientUserId` 只查询映射关系；查不到返回 `null`。
+- 登录自动开户逻辑放到 `resolveOrProvisionClientUser`。
+- 超管同步、角色同步等身份同步兜底逻辑放到 `resolveExistingClientUser`。
 - 已存在本地用户时，优先复用本地用户，不要重复创建。
-- 创建本地用户后，要保存 SSO 用户 ID 与本地用户 ID 的映射关系。
+- 创建本地用户前，先按业务系统自己的唯一规则匹配已有用户。
+- 创建本地用户或命中已有用户后，要保存 SSO 用户 ID 与本地用户 ID 的映射关系。
 - 如果你暂时没有用户表扩展字段，可以先建一张映射表保存关系。
-- `toClientUserId` 是登录链路关键方法，失败会导致 ticket 换 token 失败。
+- 登录创建和注册同步建议使用同一把 provisioning lock：`sso:user:provision:{client}:{ssoUserId}`，并在锁内 double-check mapping。
+- 历史 Client 如果把创建逻辑放在 `toClientUserId`，应迁移到 `resolveOrProvisionClientUser`；否则超管同步、角色同步等身份同步场景可能重复开户。
 
 ### 4.4 实现登录适配：`SsoClientLoginAdapter`
 
@@ -290,7 +327,7 @@ onLoginSuccess: data => {
 /sso/doLoginByTicket
   -> 校验 ticket
   -> 从 SSO Server 拿到 SSO 用户信息
-  -> SsoUserMappingService.toClientUserId
+  -> SsoUserMappingService.resolveOrProvisionClientUser
   -> 应用默认角色
   -> 查询并同步 Client 超管身份
   -> SsoClientLoginAdapter.buildLoginUser
@@ -305,7 +342,7 @@ onLoginSuccess: data => {
 1. `ticket` 是否传到 `/sso/doLoginByTicket`。
 2. `server-url` 是否能访问 SSO Server。
 3. `client` 是否与 SSO Server 登记一致。
-4. `SsoUserMappingService.toClientUserId` 是否正确返回本地用户 ID。
+4. `SsoUserMappingService.resolveOrProvisionClientUser` 是否正确返回本地用户 ID。
 5. `SsoClientLoginAdapter.createLoginResult` 是否返回了前端需要的 `accessToken`。
 
 ## 五、P0：前端接入 Web Client SDK
@@ -731,7 +768,7 @@ SSO Server 与 Client 之间的扩展通讯基于 Sa-Token SSO message。当前�
 - `ticket` 是否已经过期或被重复使用。
 - 后端 `server-url` 是否正确。
 - `client` 是否与 SSO Server 登记一致。
-- `SsoUserMappingService.toClientUserId` 是否返回本地用户 ID。
+- `SsoUserMappingService.resolveOrProvisionClientUser` 是否返回本地用户 ID。
 - 本地用户是否被禁用、删除或缺少必要状态。
 
 ### 12.3 前端保存 token 后仍然无权限

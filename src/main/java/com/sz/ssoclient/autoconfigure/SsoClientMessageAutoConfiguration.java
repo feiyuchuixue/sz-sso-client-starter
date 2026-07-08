@@ -1,6 +1,7 @@
 package com.sz.ssoclient.autoconfigure;
 
 import cn.dev33.satoken.sso.template.SaSsoClientTemplate;
+import com.sz.ssoclient.message.handler.SsoClientSuperAdminBatchSyncHandler;
 import com.sz.ssoclient.message.handler.SsoClientSuperAdminSyncHandler;
 import com.sz.ssoclient.message.SsoMessageSender;
 import com.sz.ssoclient.message.SsoMessageInterceptor;
@@ -51,6 +52,15 @@ public class SsoClientMessageAutoConfiguration {
         return new SsoClientSuperAdminSyncHandler(ssoUserMappingService, ssoRoleBindingService);
     }
 
+
+    @Bean
+    @ConditionalOnMissingBean(SsoClientSuperAdminBatchSyncHandler.class)
+    @ConditionalOnBean(SsoRoleBindingService.class)
+    public SsoClientSuperAdminBatchSyncHandler ssoClientSuperAdminBatchSyncHandler(SsoUserMappingService ssoUserMappingService,
+                                                                              SsoRoleBindingService ssoRoleBindingService) {
+        log.info("[SSO] 自动配置: 注册 Server -> Client 批量超管同步处理器");
+        return new SsoClientSuperAdminBatchSyncHandler(ssoUserMappingService, ssoRoleBindingService);
+    }
     @Bean
     @ConditionalOnMissingBean
     public SsoServerMessageDispatcher ssoServerMessageDispatcher(ObjectProvider<SsoServerMessageHandler> handlers,

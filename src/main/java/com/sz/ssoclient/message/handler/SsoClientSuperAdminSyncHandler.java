@@ -41,7 +41,7 @@ public class SsoClientSuperAdminSyncHandler implements SsoServerMessageHandler {
         }
         Long localUserId;
         try {
-            Object localUserIdObj = ssoUserMappingService.toClientUserId(centerIdObj);
+            Object localUserIdObj = ssoUserMappingService.resolveExistingClientUser(centerIdObj);
             localUserId = localUserIdObj == null ? null : Long.valueOf(localUserIdObj.toString());
         } catch (Exception e) {
             log.warn("[SSO] Server 推送超管同步时，centerId 转本地用户失败. centerId={}, clientId={}", centerIdObj, clientIdObj, e);

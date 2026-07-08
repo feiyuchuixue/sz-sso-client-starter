@@ -53,8 +53,14 @@ public class SsoClientSpiFailureAnalyzer extends AbstractFailureAnalyzer<SsoClie
             sb.append("      @Override\n");
             sb.append("      public Object toClientUserId(Object serverUserId) { ... }\n");
             sb.append("      @Override\n");
+            sb.append("      public Object resolveExistingClientUser(Object serverUserId) { ... }\n");
+            sb.append("      @Override\n");
+            sb.append("      public Object resolveOrProvisionClientUser(Object serverUserId) { ... }\n");
+            sb.append("      @Override\n");
             sb.append("      public void syncSsoRegisterUser(SaSsoMessage message, String client) { ... }\n");
             sb.append("  }\n\n");
+            sb.append("  toClientUserId 只建议查询映射；登录自动开户请放入 resolveOrProvisionClientUser；");
+            sb.append("身份同步兜底请放入 resolveExistingClientUser。\n\n");
         }
 
         if (needsLogin) {

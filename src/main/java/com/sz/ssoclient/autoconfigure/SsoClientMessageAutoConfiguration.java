@@ -3,12 +3,15 @@ package com.sz.ssoclient.autoconfigure;
 import cn.dev33.satoken.sso.template.SaSsoClientTemplate;
 import com.sz.ssoclient.message.handler.SsoClientSuperAdminBatchSyncHandler;
 import com.sz.ssoclient.message.handler.SsoClientSuperAdminSyncHandler;
+import com.sz.ssoclient.message.handler.SsoClientUserPreparationBatchHandler;
+import com.sz.ssoclient.message.handler.SsoClientUserReadinessBatchHandler;
 import com.sz.ssoclient.message.SsoMessageSender;
 import com.sz.ssoclient.message.SsoMessageInterceptor;
 import com.sz.ssoclient.message.SsoServerMessageDispatcher;
 import com.sz.ssoclient.message.SsoServerMessageHandler;
 import com.sz.ssoclient.message.handler.SsoRegisterMessageHandler;
 import com.sz.ssoclient.spi.SsoRoleBindingService;
+import com.sz.ssoclient.spi.SsoClientUserProvisioningService;
 import com.sz.ssoclient.spi.SsoUserMappingService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
@@ -61,6 +64,22 @@ public class SsoClientMessageAutoConfiguration {
         log.info("[SSO] 自动配置: 注册 Server -> Client 批量超管同步处理器");
         return new SsoClientSuperAdminBatchSyncHandler(ssoUserMappingService, ssoRoleBindingService);
     }
+    @Bean
+    @ConditionalOnMissingBean(SsoClientUserReadinessBatchHandler.class)
+    public SsoClientUserReadinessBatchHandler ssoClientUserReadinessBatchHandler(
+            SsoUserMappingService ssoUserMappingService,
+            ObjectProvider<SsoClientUserProvisioningService> provisioningServiceProvider) {
+        return new SsoClientUserReadinessBatchHandler(ssoUserMappingService, provisioningServiceProvider.getIfAvailable());
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(SsoClientUserPreparationBatchHandler.class)
+    @ConditionalOnBean(SsoClientUserProvisioningService.class)
+    public SsoClientUserPreparationBatchHandler ssoClientUserPreparationBatchHandler(
+            SsoClientUserProvisioningService provisioningService) {
+        return new SsoClientUserPreparationBatchHandler(provisioningService);
+    }
+
     @Bean
     @ConditionalOnMissingBean
     public SsoServerMessageDispatcher ssoServerMessageDispatcher(ObjectProvider<SsoServerMessageHandler> handlers,

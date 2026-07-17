@@ -1,6 +1,7 @@
 package com.sz.ssoclient.service;
 
 import cn.dev33.satoken.sso.model.SaCheckTicketResult;
+import com.sz.ssoclient.login.SsoLoginCommand;
 import com.sz.ssoclient.pojo.SsoLoginResult;
 
 /**
@@ -19,6 +20,14 @@ public interface SsoClientService {
      * @return 登录结果（框架无关）
      */
     SsoLoginResult login(SaCheckTicketResult ctr);
+
+    /**
+     * 使用 CAP ticket exchange 结果建立 Client 本地登录态.
+     *
+     * @param command CAP 登录命令
+     * @return 登录结果（框架无关）
+     */
+    SsoLoginResult login(SsoLoginCommand command);
 
 }
 

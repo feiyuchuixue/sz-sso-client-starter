@@ -4,3 +4,4 @@ com.sz.ssoclient.autoconfigure.SsoClientTemplateAutoConfiguration
 com.sz.ssoclient.autoconfigure.SsoClientMessageAutoConfiguration
 com.sz.ssoclient.autoconfigure.SsoClientLoginAutoConfiguration
 com.sz.ssoclient.autoconfigure.SsoClientAutoConfiguration
+com.sz.ssoclient.autoconfigure.ClientAccessV1AutoConfiguration

@@ -107,14 +107,14 @@ public class SsoClientController {
 
         String ticket = String.valueOf(result.getData());
         String portalUrl = buildPortalLoginUrl(ticket, safeTargetPath);
-        System.out.println("portalUrl = " + portalUrl);
+
         return SsoApiResult.success(portalUrl);
     }
 
     // 根据ticket进行登录
     @GetMapping("/doLoginByTicket")
     public SsoApiResult<SsoLoginResult> doLoginByTicket(String ticket) {
-        log.info("doLoginByTicket: 开始 ticket 登录, ticketPrefix={}...", ticket.substring(0, Math.min(8, ticket.length())));
+        log.info("doLoginByTicket: 开始 ticket 登录");
         try {
             SaCheckTicketResult ctr = SaSsoClientProcessor.instance.checkTicket(ticket);
             log.info("doLoginByTicket: ticket 验证成功, centerId={}", ctr.centerId);

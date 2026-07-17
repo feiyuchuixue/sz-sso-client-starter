@@ -18,7 +18,7 @@ public class CreateLoginResultStep<U> implements LoginStep<U> {
         context.setResult(loginAdapter.createLoginResult(
                 context.getUser(),
                 context.getLoginParameter(),
-                context.getCheckTicketResult().loginId));
+                context.getLocalUserId()));
     }
 }
 

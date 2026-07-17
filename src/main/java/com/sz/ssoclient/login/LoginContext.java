@@ -4,7 +4,6 @@ import cn.dev33.satoken.sso.model.SaCheckTicketResult;
 import cn.dev33.satoken.stp.parameter.SaLoginParameter;
 import com.sz.ssoclient.pojo.SsoLoginResult;
 import lombok.Getter;
-import lombok.RequiredArgsConstructor;
 import lombok.Setter;
 
 /**
@@ -12,10 +11,22 @@ import lombok.Setter;
  */
 @Getter
 @Setter
-@RequiredArgsConstructor
 public class LoginContext<U> {
 
     private final SaCheckTicketResult checkTicketResult;
+
+    private final SsoLoginCommand loginCommand;
+
+    public LoginContext(SaCheckTicketResult checkTicketResult) {
+        this.checkTicketResult = checkTicketResult;
+        this.loginCommand = null;
+    }
+
+    public LoginContext(SsoLoginCommand loginCommand) {
+        this.checkTicketResult = null;
+        this.loginCommand = loginCommand;
+        this.superAdmin = Boolean.TRUE.equals(loginCommand.superAdmin());
+    }
 
     private Long localUserId;
 

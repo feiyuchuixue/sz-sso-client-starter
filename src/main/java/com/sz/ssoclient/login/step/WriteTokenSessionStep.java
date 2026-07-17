@@ -21,8 +21,8 @@ public class WriteTokenSessionStep<U> implements LoginStep<U> {
             StpUtil.getTokenSessionByToken(context.getResult().getAccessToken())
                     .set(SsoProtocolFields.IS_SUPER_ADMIN, context.isSuperAdmin());
         } catch (Exception e) {
-            log.warn("[SSO] 写入 isSuperAdmin 到 TokenSession 异常，跳过: token={}, error={}",
-                    context.getResult().getAccessToken(), e.getMessage(), e);
+            log.warn("[SSO] 写入 isSuperAdmin 到 TokenSession 异常，跳过: error={}",
+                    e.getMessage(), e);
         }
     }
 }

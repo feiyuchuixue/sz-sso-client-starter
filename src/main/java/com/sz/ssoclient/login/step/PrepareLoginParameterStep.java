@@ -12,11 +12,18 @@ public class PrepareLoginParameterStep<U> implements LoginStep<U> {
     @Override
     public void execute(LoginContext<U> context) {
         SaLoginParameter parameter = new SaLoginParameter();
-        parameter.setDeviceId(context.getCheckTicketResult().deviceId);
-        parameter.setTimeout(context.getCheckTicketResult().remainTokenTimeout);
-        parameter.setActiveTimeout(context.getCheckTicketResult().remainTokenTimeout);
+        if (context.getLoginCommand() != null) {
+            parameter.setDeviceId(context.getLoginCommand().deviceId());
+            parameter.setTimeout(context.getLoginCommand().sessionTimeoutSeconds());
+            parameter.setActiveTimeout(context.getLoginCommand().sessionTimeoutSeconds());
+            context.setLocalUserId(context.getLoginCommand().localUserId());
+        } else {
+            parameter.setDeviceId(context.getCheckTicketResult().deviceId);
+            parameter.setTimeout(context.getCheckTicketResult().remainTokenTimeout);
+            parameter.setActiveTimeout(context.getCheckTicketResult().remainTokenTimeout);
+            context.setLocalUserId(Long.valueOf(String.valueOf(context.getCheckTicketResult().loginId)));
+        }
         context.setLoginParameter(parameter);
-        context.setLocalUserId(Long.valueOf(String.valueOf(context.getCheckTicketResult().loginId)));
     }
 }
 

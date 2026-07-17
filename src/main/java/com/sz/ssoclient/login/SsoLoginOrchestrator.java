@@ -18,6 +18,15 @@ public class SsoLoginOrchestrator<U> {
 
     public SsoLoginResult login(SaCheckTicketResult checkTicketResult) {
         LoginContext<U> context = new LoginContext<>(checkTicketResult);
+        return execute(context);
+    }
+
+    public SsoLoginResult login(SsoLoginCommand loginCommand) {
+        LoginContext<U> context = new LoginContext<>(loginCommand);
+        return execute(context);
+    }
+
+    private SsoLoginResult execute(LoginContext<U> context) {
         for (LoginStep<U> step : steps) {
             step.execute(context);
         }

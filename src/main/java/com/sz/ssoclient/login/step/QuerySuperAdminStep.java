@@ -21,6 +21,10 @@ public class QuerySuperAdminStep<U> implements LoginStep<U> {
 
     @Override
     public void execute(LoginContext<U> context) {
+        if (context.getLoginCommand() != null && context.getLoginCommand().superAdmin() != null) {
+            context.setSuperAdmin(context.getLoginCommand().superAdmin());
+            return;
+        }
         try {
             Object centerId = userMappingService.toServerUserId(context.getLocalUserId());
             String clientId = SaSsoClientUtil.getSsoTemplate().getClient();

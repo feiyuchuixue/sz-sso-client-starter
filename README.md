@@ -316,6 +316,10 @@ onLoginSuccess: data => {
 | `POST /sso/logout` | 业务前端 | 退出当前 Client 登录态，并联动 SSO 登出逻辑 |
 | `/sso/logoutCall` | SSO Server | 单点登出回调 |
 | `/sso/pushC` | SSO Server | Sa-Token SSO Client 消息接收入口 |
+| `POST /sso/v1/login/transactions` | Web SDK | 创建浏览器绑定的 CAP 登录事务 |
+| `POST /sso/v1/login/callback` | Web SDK | 校验浏览器绑定并交换一次性 Login Ticket |
+| `POST /sso/v1/callbacks/logout` | SSO Server | 正式 CAP V1 单点注销回调 |
+| `POST /sso/v1/messages` | SSO Server | 正式 CAP V1 业务消息入口 |
 
 > 在常规前端接入中，Web SDK 最关键调用的是 `/sso/doLoginByTicket`。业务系统自己的退出按钮应调用 `/sso/logout`。头像菜单进入认证中心个人门户时，应调用 `/sso/getSsoPortalUrl`，不要直接拼认证中心 `/ucenter/*` 地址。
 
@@ -344,6 +348,22 @@ onLoginSuccess: data => {
 3. `client` 是否与 SSO Server 登记一致。
 4. `SsoUserMappingService.resolveOrProvisionClientUser` 是否正确返回本地用户 ID。
 5. `SsoClientLoginAdapter.createLoginResult` 是否返回了前端需要的 `accessToken`。
+
+### 4.7 单实例与多实例状态
+
+Starter 不再使用 `HttpSession ID` 绑定 CAP 登录事务，而是写入随机的 `SZ_SSO_BROWSER` 浏览器会话 Cookie：`HttpOnly`、`SameSite=Lax`、`Path=/`，HTTPS 请求自动增加 `Secure`。Cookie 只用于证明登录事务属于同一浏览器，不是登录凭据。
+
+Starter 会自动选择状态后端：
+
+| 环境 | 状态后端 | 行为 |
+| --- | --- | --- |
+| 容器存在 `StringRedisTemplate` | Spring Data Redis | 登录事务、Nonce、SLO/Message 幂等跨实例共享 |
+| `local/dev/test` 且没有 Redis Bean | JVM 内存 | 允许单实例开发，启动输出强警告 |
+| `prod/production/preview` 且没有共享仓库 | 无 | Spring Context 启动失败，禁止静默降级 |
+
+多实例生产部署不需要新增 `sz.sso.client-access` 配置，也不要求负载均衡启用粘性会话；需要保证所有实例使用同一逻辑 Redis，并确保 Client 自身的 Sa-Token 登录态也使用共享 Dao。
+
+如果不使用 Redis，可以提供自定义 `ClientAccessStateRepository` Bean，但它必须实现跨实例可见的原子 `put-if-absent`、CAS、Compare-and-delete 和 TTL。存储不可用时必须失败关闭，不能切回本地 Map。
 
 ## 五、P0：前端接入 Web Client SDK
 

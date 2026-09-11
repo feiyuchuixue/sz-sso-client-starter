@@ -21,9 +21,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class SsoCoreTypesTest {
 
     @Test
-    @DisplayName("REGISTER 消息类型应为 'REGISTER'")
-    void messageRegister_shouldBeRegister() {
-        assertThat(SsoMessageTypes.REGISTER).isEqualTo("REGISTER");
+    @DisplayName("CREATE_PORTAL_TICKET 消息类型应保持冻结值")
+    void messagePortalTicket_shouldBeCreatePortalTicket() {
+        assertThat(SsoMessageTypes.CREATE_PORTAL_TICKET).isEqualTo("CREATE_PORTAL_TICKET");
     }
 
     @Test
@@ -41,7 +41,7 @@ class SsoCoreTypesTest {
     @Test
     @DisplayName("两个消息类型值不应相同（避免消息路由混淆）")
     void twoConstants_shouldBeDifferent() {
-        assertThat(SsoMessageTypes.REGISTER).isNotEqualTo(SsoMessageTypes.USER_CHECK);
+        assertThat(SsoMessageTypes.CREATE_PORTAL_TICKET).isNotEqualTo(SsoMessageTypes.USER_CHECK);
     }
 
     @Test

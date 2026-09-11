@@ -1,0 +1,29 @@
+spring:
+  main:
+    banner-mode: "off"
+
+sz:
+  sso-client:
+    enabled: true
+    external-origin: https://client.example.com
+    allow-missing-browser-source: false
+    secure-cookie: true
+    message-connect-timeout-millis: 1000
+    message-read-timeout-millis: 1000
+    portal-login-path: /portal-login
+
+sa-token:
+  sso-client:
+    mode: sso-client3
+    client: boot4-fixture
+    server-url: https://sso.example.com
+    auth-url: https://sso.example.com/sso/auth
+    get-data-url: https://sso.example.com/sso/getData
+    signout-url: https://sso.example.com/sso/signout
+    push-url: https://client.example.com/sso/pushC
+    curr-sso-login: https://client.example.com/sso/v1/login/callback
+    secret-key: boot4-fixture-secret-not-production
+    is-http: true
+    is-slo: true
+    reg-logout-call: false
+    is-check-sign: false
